@@ -86,41 +86,56 @@ button {
   gap: 1rem;
 }
 
-.table {
+.data-table {
   border: 1px solid #2a2a2a;
   border-radius: 10px;
   overflow: hidden;
 }
 
-.table-row {
-  display: grid;
-  grid-template-columns: 120px 1.4fr 2fr 120px;
-  gap: 0.75rem;
+.data-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
   padding: 0.6rem 0.9rem;
   border-bottom: 1px solid #2a2a2a;
+  text-align: left;
+  vertical-align: middle;
 }
 
-.table-row:last-child {
-  border-bottom: none;
-}
-
-.table-head {
+.data-table th {
   background: #1f1f1f;
   font-weight: 600;
 }
 
-.table-row.empty {
-  grid-template-columns: 1fr;
+.data-table tr:last-child td {
+  border-bottom: none;
 }
 
-.table-row .purpose {
+.data-table td.empty {
   color: #c8c8c8;
-  font-size: 0.95rem;
+}
+
+.data-table input,
+.data-table select {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid #2a2a2a;
+  background: #101010;
+  color: inherit;
 }
 
 .amount {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.data-table td .amount {
+  display: block;
+  text-align: right;
 }
 
 .actions {
@@ -233,22 +248,6 @@ button {
 .categorize-row select {
   width: 100%;
   padding: 0.35rem 0.5rem;
-  border-radius: 6px;
-  border: 1px solid #2a2a2a;
-  background: #101010;
-  color: inherit;
-}
-
-.rule-form {
-  display: grid;
-  grid-template-columns: 130px 1.6fr 1fr 90px 140px 110px;
-  gap: 0.6rem;
-  align-items: center;
-}
-
-.rule-form input,
-.rule-form select {
-  padding: 0.4rem 0.5rem;
   border-radius: 6px;
   border: 1px solid #2a2a2a;
   background: #101010;
