@@ -239,6 +239,41 @@ button {
   color: inherit;
 }
 
+.rule-form {
+  display: grid;
+  grid-template-columns: 130px 1.6fr 1fr 90px 140px 110px;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.rule-form input,
+.rule-form select {
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid #2a2a2a;
+  background: #101010;
+  color: inherit;
+}
+
+.rule-row-table {
+  grid-template-columns: 130px 1.6fr 1fr 90px 140px 140px;
+  align-items: center;
+}
+
+.rule-row-table input,
+.rule-row-table select {
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid #2a2a2a;
+  background: #101010;
+  color: inherit;
+}
+
+.rule-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

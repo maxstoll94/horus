@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 
 type TransactionRow = {
@@ -49,7 +49,7 @@ function App() {
   const [newCategoryColor, setNewCategoryColor] = useState('#4c7cff')
   const [categoryStatus, setCategoryStatus] = useState<string>('')
   const [activeView, setActiveView] = useState<
-    'transactions' | 'categories' | 'categorization'
+    'transactions' | 'categories' | 'categorization' | 'rules'
   >('transactions')
   const [categorizationTab, setCategorizationTab] = useState<
     'uncategorized' | 'categorized'
@@ -61,6 +61,35 @@ function App() {
   const [selection, setSelection] = useState<Record<number, number>>({})
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null)
   const [rulesStatus, setRulesStatus] = useState<string>('')
+  const [rules, setRules] = useState<
+    Array<{
+      id: number
+      matcherType: string
+      matcherValue: string
+      categoryId: number
+      priority: number
+      isActive: number
+    }>
+  >([])
+  const [ruleEdits, setRuleEdits] = useState<
+    Record<
+      number,
+      {
+        matcherType: string
+        matcherValue: string
+        categoryId: number
+        priority: number
+        isActive: number
+      }
+    >
+  >({})
+  const [newRule, setNewRule] = useState({
+    matcherType: 'payee' as RuleDraft['matcherType'],
+    matcherValue: '',
+    categoryId: 0,
+    priority: 100,
+    isActive: 1,
+  })
 
   const loadTransactions = async () => {
     setLoadingTransactions(true)
@@ -111,11 +140,24 @@ function App() {
     setCategories(rows)
   }
 
+  const loadRules = async () => {
+    const rows = await window.api.rules.list()
+    setRules(rows)
+    setRuleEdits({})
+    if (rows.length > 0) {
+      setNewRule((current) => ({
+        ...current,
+        categoryId: current.categoryId || rows[0].categoryId,
+      }))
+    }
+  }
+
   useEffect(() => {
     loadTransactions()
     loadUncategorized()
     loadCategorized()
     loadCategories()
+    loadRules()
   }, [])
 
   useEffect(() => {
@@ -278,6 +320,43 @@ function App() {
     loadCategorized()
   }
 
+  const createRule = async () => {
+    if (!newRule.matcherValue.trim() || !newRule.categoryId) {
+      return
+    }
+
+    await window.api.rules.create({
+      matcherType: newRule.matcherType,
+      matcherValue: newRule.matcherValue.trim(),
+      categoryId: newRule.categoryId,
+      priority: newRule.priority,
+      isActive: newRule.isActive,
+    })
+
+    setNewRule({
+      matcherType: newRule.matcherType,
+      matcherValue: '',
+      categoryId: newRule.categoryId,
+      priority: newRule.priority,
+      isActive: newRule.isActive,
+    })
+    loadRules()
+  }
+
+  const updateRule = async (id: number) => {
+    const draft = ruleEdits[id]
+    if (!draft) {
+      return
+    }
+    await window.api.rules.update({ id, ...draft })
+    loadRules()
+  }
+
+  const removeRule = async (id: number) => {
+    await window.api.rules.delete({ id })
+    loadRules()
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -294,6 +373,12 @@ function App() {
             onClick={() => setActiveView('categorization')}
           >
             Categorization
+          </button>
+          <button
+            className={activeView === 'rules' ? 'active' : ''}
+            onClick={() => setActiveView('rules')}
+          >
+            Rules
           </button>
           <button
             className={activeView === 'categories' ? 'active' : ''}
@@ -538,7 +623,7 @@ function App() {
                             onClick={() => removeCategory(tx.id, cat.id)}
                           >
                             {cat.name}
-                            <span className="chip-remove">�</span>
+                            <span className="chip-remove">×</span>
                           </button>
                         ))}
                       </div>
@@ -609,6 +694,182 @@ function App() {
                   </label>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+        {activeView === 'rules' && (
+          <div className="card">
+            <div className="card-header">
+              <h2>Rules</h2>
+              <button onClick={loadRules}>Refresh</button>
+            </div>
+            <div className="rule-form">
+              <select
+                value={newRule.matcherType}
+                onChange={(event) =>
+                  setNewRule({
+                    ...newRule,
+                    matcherType: event.target.value as RuleDraft['matcherType'],
+                  })
+                }
+              >
+                <option value="payee">Payee</option>
+                <option value="purpose">Purpose</option>
+                <option value="iban">IBAN</option>
+                <option value="bic">BIC</option>
+                <option value="amount">Amount</option>
+                <option value="direction">Direction</option>
+              </select>
+              <input
+                type="text"
+                placeholder="Match value"
+                value={newRule.matcherValue}
+                onChange={(event) =>
+                  setNewRule({ ...newRule, matcherValue: event.target.value })
+                }
+              />
+              <select
+                value={newRule.categoryId}
+                onChange={(event) =>
+                  setNewRule({ ...newRule, categoryId: Number(event.target.value) })
+                }
+              >
+                <option value={0}>Select category</option>
+                {activeCategories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>
+                    {cat.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                value={newRule.priority}
+                min={0}
+                onChange={(event) =>
+                  setNewRule({
+                    ...newRule,
+                    priority: Number(event.target.value),
+                  })
+                }
+              />
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={newRule.isActive === 1}
+                  onChange={(event) =>
+                    setNewRule({
+                      ...newRule,
+                      isActive: event.target.checked ? 1 : 0,
+                    })
+                  }
+                />
+                <span>{newRule.isActive === 1 ? 'Active' : 'Inactive'}</span>
+              </label>
+              <button onClick={createRule}>Add Rule</button>
+            </div>
+            <div className="table">
+              <div className="table-row table-head rule-row-table">
+                <div>Field</div>
+                <div>Value</div>
+                <div>Category</div>
+                <div>Priority</div>
+                <div>Status</div>
+                <div></div>
+              </div>
+              {rules.length === 0 && (
+                <div className="table-row empty">No rules yet.</div>
+              )}
+              {rules.map((rule) => {
+                const draft = ruleEdits[rule.id] ?? rule
+                return (
+                  <div className="table-row rule-row-table" key={rule.id}>
+                    <select
+                      value={draft.matcherType}
+                      onChange={(event) =>
+                        setRuleEdits((current) => ({
+                          ...current,
+                          [rule.id]: {
+                            ...draft,
+                            matcherType: event.target.value,
+                          },
+                        }))
+                      }
+                    >
+                      <option value="payee">Payee</option>
+                      <option value="purpose">Purpose</option>
+                      <option value="iban">IBAN</option>
+                      <option value="bic">BIC</option>
+                      <option value="amount">Amount</option>
+                      <option value="direction">Direction</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={draft.matcherValue}
+                      onChange={(event) =>
+                        setRuleEdits((current) => ({
+                          ...current,
+                          [rule.id]: {
+                            ...draft,
+                            matcherValue: event.target.value,
+                          },
+                        }))
+                      }
+                    />
+                    <select
+                      value={draft.categoryId}
+                      onChange={(event) =>
+                        setRuleEdits((current) => ({
+                          ...current,
+                          [rule.id]: {
+                            ...draft,
+                            categoryId: Number(event.target.value),
+                          },
+                        }))
+                      }
+                    >
+                      {activeCategories.map((cat) => (
+                        <option key={cat.id} value={cat.id}>
+                          {cat.name}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      value={draft.priority}
+                      min={0}
+                      onChange={(event) =>
+                        setRuleEdits((current) => ({
+                          ...current,
+                          [rule.id]: {
+                            ...draft,
+                            priority: Number(event.target.value),
+                          },
+                        }))
+                      }
+                    />
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={draft.isActive === 1}
+                        onChange={(event) =>
+                          setRuleEdits((current) => ({
+                            ...current,
+                            [rule.id]: {
+                              ...draft,
+                              isActive: event.target.checked ? 1 : 0,
+                            },
+                          }))
+                        }
+                      />
+                      <span>{draft.isActive === 1 ? 'Active' : 'Inactive'}</span>
+                    </label>
+                    <div className="rule-actions">
+                      <button onClick={() => updateRule(rule.id)}>Save</button>
+                      <button onClick={() => removeRule(rule.id)}>Delete</button>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}
