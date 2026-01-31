@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import './App.css'
 import { DataTable } from './components/DataTable'
 
@@ -51,8 +62,8 @@ function App() {
   const [newCategoryColor, setNewCategoryColor] = useState('#4c7cff')
   const [categoryStatus, setCategoryStatus] = useState<string>('')
   const [activeView, setActiveView] = useState<
-    'transactions' | 'categories' | 'categorization' | 'rules' | 'ai'
-  >('transactions')
+    'dashboard' | 'transactions' | 'categories' | 'categorization' | 'rules' | 'ai'
+  >('dashboard')
   const [categorizationTab, setCategorizationTab] = useState<
     'uncategorized' | 'categorized'
   >('uncategorized')
@@ -124,6 +135,33 @@ function App() {
     priority: 100,
     isActive: 1,
   })
+  const [dashboardMonths, setDashboardMonths] = useState<string[]>([])
+  const [dashboardMonth, setDashboardMonth] = useState<string>('')
+  const [dashboardSummary, setDashboardSummary] = useState<{
+    month: string
+    totalIncome: number
+    totalSpend: number
+    net: number
+    transactionCount: number
+    categorizedCount: number
+    uncategorizedCount: number
+  } | null>(null)
+  const [dashboardCategories, setDashboardCategories] = useState<
+    Array<{
+      categoryId: number
+      categoryName: string
+      totalSpend: number
+      transactionCount: number
+    }>
+  >([])
+  const [dashboardTrend, setDashboardTrend] = useState<
+    Array<{
+      month: string
+      totalSpend: number
+      totalIncome: number
+      net: number
+    }>
+  >([])
 
   const activeCategories = useMemo(
     () => categories.filter((cat) => cat.isActive === 1),
@@ -588,6 +626,28 @@ function App() {
     setAiRequests(requests)
   }
 
+  const loadDashboardMonths = async () => {
+    const months = await window.api.dashboard.months()
+    setDashboardMonths(months)
+    if (!dashboardMonth && months.length > 0) {
+      setDashboardMonth(months[0])
+    }
+  }
+
+  const loadDashboardData = async (month: string) => {
+    if (!month) {
+      return
+    }
+    const [summary, categories, trend] = await Promise.all([
+      window.api.dashboard.summary({ month }),
+      window.api.dashboard.categories({ month }),
+      window.api.dashboard.trend({ months: 6 }),
+    ])
+    setDashboardSummary(summary)
+    setDashboardCategories(categories)
+    setDashboardTrend([...trend].reverse())
+  }
+
   useEffect(() => {
     loadTransactions()
     loadUncategorized()
@@ -595,7 +655,14 @@ function App() {
     loadCategories()
     loadRules()
     loadAiSettings()
+    loadDashboardMonths()
   }, [])
+
+  useEffect(() => {
+    if (dashboardMonth) {
+      loadDashboardData(dashboardMonth)
+    }
+  }, [dashboardMonth])
 
   useEffect(() => {
     if (activeCategories.length > 0 && newRule.categoryId === 0) {
@@ -765,6 +832,12 @@ function App() {
     loadCategorized()
   }
 
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat('de-DE', {
+      style: 'currency',
+      currency: 'EUR',
+    }).format(value)
+
   const suggestWithAi = async () => {
     setAiStatus('Requesting AI suggestions...')
     const result = await window.api.ai.suggest({
@@ -850,6 +923,12 @@ function App() {
         <div className="brand">Horus</div>
         <nav className="nav">
           <button
+            className={activeView === 'dashboard' ? 'active' : ''}
+            onClick={() => setActiveView('dashboard')}
+          >
+            Dashboard
+          </button>
+          <button
             className={activeView === 'transactions' ? 'active' : ''}
             onClick={() => setActiveView('transactions')}
           >
@@ -883,6 +962,158 @@ function App() {
       </aside>
       <div className="app">
         <h1>Horus</h1>
+        {activeView === 'dashboard' && (
+          <div className="card dashboard">
+            <div className="card-header">
+              <h2>Dashboard</h2>
+              <div className="actions">
+                <label className="picker">
+                  Month
+                  <select
+                    value={dashboardMonth}
+                    onChange={(event) => setDashboardMonth(event.target.value)}
+                  >
+                    {dashboardMonths.length === 0 && (
+                      <option value="">No data</option>
+                    )}
+                    {dashboardMonths.map((month) => (
+                      <option key={month} value={month}>
+                        {month}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button onClick={() => setActiveView('categorization')}>
+                  Go to Categorization
+                </button>
+                <button onClick={() => loadDashboardData(dashboardMonth)}>
+                  Refresh
+                </button>
+              </div>
+            </div>
+            {dashboardSummary ? (
+              <div className="dashboard-grid">
+                <div className="summary-grid">
+                  <div className="summary-card">
+                    <span className="label">Total spend</span>
+                    <strong>{formatCurrency(dashboardSummary.totalSpend)}</strong>
+                  </div>
+                  <div className="summary-card">
+                    <span className="label">Total income</span>
+                    <strong>{formatCurrency(dashboardSummary.totalIncome)}</strong>
+                  </div>
+                  <div className="summary-card">
+                    <span className="label">Net</span>
+                    <strong>{formatCurrency(dashboardSummary.net)}</strong>
+                  </div>
+                  <div className="summary-card">
+                    <span className="label">Categorized</span>
+                    <strong>
+                      {dashboardSummary.transactionCount > 0
+                        ? `${Math.round(
+                            (dashboardSummary.categorizedCount /
+                              dashboardSummary.transactionCount) *
+                              100
+                          )}%`
+                        : '0%'}
+                    </strong>
+                    <span className="muted">
+                      {dashboardSummary.uncategorizedCount} uncategorized
+                    </span>
+                    <button
+                      className="inline-action"
+                      onClick={() => setActiveView('categorization')}
+                    >
+                      Go to Categorization
+                    </button>
+                  </div>
+                </div>
+                <div className="chart-grid">
+                  <div className="chart-card">
+                    <div className="card-header">
+                      <h3>Spend by category</h3>
+                    </div>
+                    {dashboardCategories.length === 0 ? (
+                      <div className="muted">No categorized spend yet.</div>
+                    ) : (
+                      <div className="chart">
+                        <ResponsiveContainer width="100%" height={260}>
+                          <BarChart data={dashboardCategories}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="categoryName" />
+                            <YAxis />
+                            <Tooltip
+                              formatter={(value: number) => formatCurrency(value)}
+                            />
+                            <Bar dataKey="totalSpend" fill="#2b4cff" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+                  </div>
+                  <div className="chart-card">
+                    <div className="card-header">
+                      <h3>Spend trend (last 6 months)</h3>
+                    </div>
+                    {dashboardTrend.length === 0 ? (
+                      <div className="muted">No trend data yet.</div>
+                    ) : (
+                      <div className="chart">
+                        <ResponsiveContainer width="100%" height={260}>
+                          <LineChart data={dashboardTrend}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="month" />
+                            <YAxis />
+                            <Tooltip
+                              formatter={(value: number) => formatCurrency(value)}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="totalSpend"
+                              stroke="#f2c14e"
+                              strokeWidth={2}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="chart-card">
+                  <div className="card-header">
+                    <h3>Transactions per category</h3>
+                  </div>
+                  {dashboardCategories.length === 0 ? (
+                    <div className="muted">No categorized transactions yet.</div>
+                  ) : (
+                    <div className="data-table">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Category</th>
+                            <th>Transactions</th>
+                            <th>Total spend</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dashboardCategories.map((row) => (
+                            <tr key={row.categoryId}>
+                              <td>{row.categoryName}</td>
+                              <td>{row.transactionCount}</td>
+                              <td>{formatCurrency(row.totalSpend)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="muted">No data yet.</div>
+            )}
+          </div>
+        )}
         {activeView === 'transactions' && (
           <>
             <div className="card">

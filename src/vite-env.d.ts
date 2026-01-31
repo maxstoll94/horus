@@ -146,5 +146,29 @@ interface Window {
         createdAt: string
       }>>
     }
+    dashboard: {
+      months: () => Promise<string[]>
+      summary: (payload: { month: string }) => Promise<{
+        month: string
+        totalIncome: number
+        totalSpend: number
+        net: number
+        transactionCount: number
+        categorizedCount: number
+        uncategorizedCount: number
+      } | null>
+      categories: (payload: { month: string }) => Promise<Array<{
+        categoryId: number
+        categoryName: string
+        totalSpend: number
+        transactionCount: number
+      }>>
+      trend: (payload?: { months?: number }) => Promise<Array<{
+        month: string
+        totalSpend: number
+        totalIncome: number
+        net: number
+      }>>
+    }
   }
 }

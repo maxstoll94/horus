@@ -100,4 +100,13 @@ contextBridge.exposeInMainWorld('api', {
     listRequests: (payload?: { limit?: number }) =>
       ipcRenderer.invoke('ai:requests:list', payload ?? {}),
   },
+  dashboard: {
+    months: () => ipcRenderer.invoke('dashboard:months'),
+    summary: (payload: { month: string }) =>
+      ipcRenderer.invoke('dashboard:summary', payload),
+    categories: (payload: { month: string }) =>
+      ipcRenderer.invoke('dashboard:categories', payload),
+    trend: (payload?: { months?: number }) =>
+      ipcRenderer.invoke('dashboard:trend', payload ?? {}),
+  },
 })

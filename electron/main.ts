@@ -16,8 +16,12 @@ import {
   getAiSettings,
   listAiRequests,
   getAiSuggestionsForTransactions,
+  getDashboardSummary,
   insertImport,
   insertTransactions,
+  listDashboardCategorySpend,
+  listDashboardMonths,
+  listDashboardTrend,
   listCategories,
   listCategorizedTransactions,
   listRules,
@@ -170,6 +174,25 @@ app.whenReady().then(() => {
   ipcMain.handle('ai:requests:list', (_event, payload) =>
     listAiRequests(payload?.limit ?? 100)
   )
+  ipcMain.handle('dashboard:months', () => listDashboardMonths())
+  ipcMain.handle('dashboard:summary', (_event, payload) => {
+    const month = typeof payload?.month === 'string' ? payload.month : ''
+    if (!month) {
+      return null
+    }
+    return getDashboardSummary(month)
+  })
+  ipcMain.handle('dashboard:categories', (_event, payload) => {
+    const month = typeof payload?.month === 'string' ? payload.month : ''
+    if (!month) {
+      return []
+    }
+    return listDashboardCategorySpend(month)
+  })
+  ipcMain.handle('dashboard:trend', (_event, payload) => {
+    const months = Number(payload?.months) || 6
+    return listDashboardTrend(months)
+  })
   ipcMain.handle('ai:suggestions', (_event, payload) => {
     const ids = Array.isArray(payload?.transactionIds)
       ? payload.transactionIds

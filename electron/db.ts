@@ -481,6 +481,137 @@ export type TransactionListFilters = {
   offset?: number
 }
 
+export type DashboardSummaryRow = {
+  month: string
+  totalIncome: number
+  totalSpend: number
+  net: number
+  transactionCount: number
+  categorizedCount: number
+  uncategorizedCount: number
+}
+
+export type DashboardCategorySpendRow = {
+  categoryId: number
+  categoryName: string
+  totalSpend: number
+  transactionCount: number
+}
+
+export type DashboardTrendRow = {
+  month: string
+  totalSpend: number
+  totalIncome: number
+  net: number
+}
+
+export function listDashboardMonths() {
+  const db = initializeDatabase()
+  const rows = db
+    .prepare(
+      `
+        SELECT DISTINCT substr(booking_date, 1, 7) as month
+        FROM transactions
+        ORDER BY month DESC
+      `
+    )
+    .all() as { month: string }[]
+  return rows.map((row) => row.month)
+}
+
+export function getDashboardSummary(month: string): DashboardSummaryRow {
+  const db = initializeDatabase()
+  const row = db
+    .prepare(
+      `
+        SELECT
+          ? as month,
+          COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) as totalIncome,
+          COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END), 0) as totalSpend,
+          COALESCE(SUM(amount), 0) as net,
+          COUNT(1) as transactionCount,
+          (
+            SELECT COUNT(DISTINCT t2.id)
+            FROM transactions t2
+            INNER JOIN transaction_categories tc2
+              ON tc2.transaction_id = t2.id
+            WHERE substr(t2.booking_date, 1, 7) = ?
+          ) as categorizedCount,
+          (
+            SELECT COUNT(1)
+            FROM transactions t3
+            LEFT JOIN transaction_categories tc3
+              ON tc3.transaction_id = t3.id
+            WHERE tc3.transaction_id IS NULL
+              AND substr(t3.booking_date, 1, 7) = ?
+          ) as uncategorizedCount
+        FROM transactions t
+        WHERE substr(t.booking_date, 1, 7) = ?
+      `
+    )
+    .get(month, month, month, month) as DashboardSummaryRow | undefined
+
+  if (!row) {
+    return {
+      month,
+      totalIncome: 0,
+      totalSpend: 0,
+      net: 0,
+      transactionCount: 0,
+      categorizedCount: 0,
+      uncategorizedCount: 0,
+    }
+  }
+
+  return row
+}
+
+export function listDashboardCategorySpend(month: string) {
+  const db = initializeDatabase()
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          c.id as categoryId,
+          c.name as categoryName,
+          COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END), 0) as totalSpend,
+          COUNT(1) as transactionCount
+        FROM transaction_categories tc
+        INNER JOIN transactions t
+          ON t.id = tc.transaction_id
+        INNER JOIN categories c
+          ON c.id = tc.category_id
+        WHERE substr(t.booking_date, 1, 7) = ?
+        GROUP BY c.id, c.name
+        ORDER BY totalSpend DESC, c.name ASC
+      `
+    )
+    .all(month) as DashboardCategorySpendRow[]
+
+  return rows
+}
+
+export function listDashboardTrend(months = 6) {
+  const db = initializeDatabase()
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          substr(booking_date, 1, 7) as month,
+          COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END), 0) as totalSpend,
+          COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) as totalIncome,
+          COALESCE(SUM(amount), 0) as net
+        FROM transactions
+        GROUP BY month
+        ORDER BY month DESC
+        LIMIT ?
+      `
+    )
+    .all(months) as DashboardTrendRow[]
+
+  return rows
+}
+
 export function listTransactions(filters: TransactionListFilters = {}) {
   const db = initializeDatabase()
   const limit = filters.limit ?? 200
