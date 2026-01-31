@@ -27,6 +27,15 @@ type CategorizedViewRow = TransactionRow & {
   categories: { id: number; name: string }[]
 }
 
+type RuleDraft = {
+  txId: number
+  matcherType: 'payee' | 'purpose' | 'iban' | 'bic' | 'amount' | 'direction'
+  matcherValue: string
+  categoryId: number
+  priority: number
+  isActive: number
+}
+
 function App() {
   const [filePath, setFilePath] = useState<string | null>(null)
   const [status, setStatus] = useState<string>('Idle')
@@ -50,6 +59,7 @@ function App() {
   const [categorizedPage, setCategorizedPage] = useState(0)
   const [pageSize, setPageSize] = useState(20)
   const [selection, setSelection] = useState<Record<number, number>>({})
+  const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null)
 
   const loadTransactions = async () => {
     setLoadingTransactions(true)
@@ -225,6 +235,38 @@ function App() {
     loadCategorized()
   }
 
+  const openRuleDraft = (tx: TransactionRow) => {
+    const defaultCategory = selection[tx.id]
+    if (!defaultCategory) {
+      return
+    }
+
+    setRuleDraft({
+      txId: tx.id,
+      matcherType: 'payee',
+      matcherValue: tx.payee ?? '',
+      categoryId: defaultCategory,
+      priority: 100,
+      isActive: 1,
+    })
+  }
+
+  const saveRuleDraft = async () => {
+    if (!ruleDraft || !ruleDraft.matcherValue.trim()) {
+      return
+    }
+
+    await window.api.rules.create({
+      matcherType: ruleDraft.matcherType,
+      matcherValue: ruleDraft.matcherValue.trim(),
+      categoryId: ruleDraft.categoryId,
+      priority: ruleDraft.priority,
+      isActive: ruleDraft.isActive,
+    })
+
+    setRuleDraft(null)
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -379,6 +421,7 @@ function App() {
                     <div className="amount">Amount</div>
                     <div>Category</div>
                     <div></div>
+                    <div></div>
                   </div>
                   {uncategorized.length === 0 && (
                     <div className="table-row empty">
@@ -414,6 +457,12 @@ function App() {
                         disabled={!selection[tx.id]}
                       >
                         Add
+                      </button>
+                      <button
+                        onClick={() => openRuleDraft(tx)}
+                        disabled={!selection[tx.id]}
+                      >
+                        Create Rule
                       </button>
                     </div>
                   ))}
@@ -551,6 +600,96 @@ function App() {
           </div>
         )}
       </div>
+      {ruleDraft && (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div className="modal-header">
+              <h3>Create Rule</h3>
+              <button onClick={() => setRuleDraft(null)}>Close</button>
+            </div>
+            <div className="modal-body">
+              <label>
+                Field
+                <select
+                  value={ruleDraft.matcherType}
+                  onChange={(event) =>
+                    setRuleDraft({
+                      ...ruleDraft,
+                      matcherType: event.target.value as RuleDraft['matcherType'],
+                    })
+                  }
+                >
+                  <option value="payee">Payee</option>
+                  <option value="purpose">Purpose</option>
+                  <option value="iban">IBAN</option>
+                  <option value="bic">BIC</option>
+                  <option value="amount">Amount</option>
+                  <option value="direction">Direction</option>
+                </select>
+              </label>
+              <label>
+                Value
+                <input
+                  type="text"
+                  value={ruleDraft.matcherValue}
+                  onChange={(event) =>
+                    setRuleDraft({ ...ruleDraft, matcherValue: event.target.value })
+                  }
+                />
+              </label>
+              <label>
+                Category
+                <select
+                  value={ruleDraft.categoryId}
+                  onChange={(event) =>
+                    setRuleDraft({
+                      ...ruleDraft,
+                      categoryId: Number(event.target.value),
+                    })
+                  }
+                >
+                  {activeCategories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Priority
+                <input
+                  type="number"
+                  value={ruleDraft.priority}
+                  min={0}
+                  onChange={(event) =>
+                    setRuleDraft({
+                      ...ruleDraft,
+                      priority: Number(event.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={ruleDraft.isActive === 1}
+                  onChange={(event) =>
+                    setRuleDraft({
+                      ...ruleDraft,
+                      isActive: event.target.checked ? 1 : 0,
+                    })
+                  }
+                />
+                <span>{ruleDraft.isActive === 1 ? 'Active' : 'Inactive'}</span>
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setRuleDraft(null)}>Cancel</button>
+              <button onClick={saveRuleDraft}>Save Rule</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
