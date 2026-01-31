@@ -8,7 +8,7 @@ const Database = require('better-sqlite3') as typeof import('better-sqlite3')
 type DatabaseInstance = import('better-sqlite3').Database
 type RunResult = import('better-sqlite3').RunResult
 
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 4
 let dbInstance: DatabaseInstance | null = null
 
 function getDatabasePath() {
@@ -243,6 +243,48 @@ function applyMigrations(db: DatabaseInstance) {
         CREATE INDEX IF NOT EXISTS idx_transaction_categories_cat
           ON transaction_categories (category_id);
         INSERT INTO schema_migrations (version) VALUES (2);
+      `)
+    }
+
+    if (currentVersion < 3) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ai_suggestions (
+          id INTEGER PRIMARY KEY,
+          transaction_id INTEGER NOT NULL,
+          category_id INTEGER NOT NULL,
+          confidence REAL NOT NULL,
+          reason TEXT,
+          model TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE (transaction_id),
+          FOREIGN KEY (transaction_id) REFERENCES transactions (id),
+          FOREIGN KEY (category_id) REFERENCES categories (id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ai_suggestions_tx
+          ON ai_suggestions (transaction_id);
+        CREATE INDEX IF NOT EXISTS idx_ai_suggestions_cat
+          ON ai_suggestions (category_id);
+
+        INSERT INTO schema_migrations (version) VALUES (3);
+      `)
+    }
+
+    if (currentVersion < 4) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ai_settings (
+          id INTEGER PRIMARY KEY,
+          model TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 0,
+          confidence_threshold REAL NOT NULL DEFAULT 0.85,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        INSERT INTO ai_settings (id, model, enabled, confidence_threshold)
+        VALUES (1, 'gpt-4o-mini-2024-07-18', 0, 0.85)
+        ON CONFLICT(id) DO NOTHING;
+
+        INSERT INTO schema_migrations (version) VALUES (4);
       `)
     }
   })()
@@ -562,6 +604,69 @@ export function listRules() {
     .all() as RuleRow[]
 
   return rows
+}
+
+export type AiSettingsRow = {
+  id: number
+  model: string
+  enabled: number
+  confidenceThreshold: number
+}
+
+export function getAiSettings() {
+  const db = initializeDatabase()
+  const row = db
+    .prepare(
+      `
+        SELECT
+          id,
+          model,
+          enabled,
+          confidence_threshold as confidenceThreshold
+        FROM ai_settings
+        WHERE id = 1
+      `
+    )
+    .get() as AiSettingsRow | undefined
+
+  if (!row) {
+    db.prepare(
+      `
+        INSERT INTO ai_settings (id, model, enabled, confidence_threshold)
+        VALUES (1, 'gpt-4o-mini-2024-07-18', 0, 0.85)
+      `
+    ).run()
+    return getAiSettings()
+  }
+
+  return row
+}
+
+export function updateAiSettings(updates: {
+  model?: string
+  enabled?: number
+  confidenceThreshold?: number
+}) {
+  const db = initializeDatabase()
+  const current = getAiSettings()
+  const next = {
+    model: updates.model ?? current.model,
+    enabled: updates.enabled ?? current.enabled,
+    confidenceThreshold: updates.confidenceThreshold ?? current.confidenceThreshold,
+  }
+
+  db.prepare(
+    `
+      UPDATE ai_settings
+      SET model = ?,
+          enabled = ?,
+          confidence_threshold = ?,
+          updated_at = datetime('now')
+      WHERE id = 1
+    `
+  ).run(next.model, next.enabled, next.confidenceThreshold)
+
+  return getAiSettings()
 }
 
 export function createRule(input: {

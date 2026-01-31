@@ -12,6 +12,7 @@ import {
   getDatabaseInfo,
   initializeDatabase,
   applyRulesToUncategorized,
+  getAiSettings,
   insertImport,
   insertTransactions,
   listCategories,
@@ -20,6 +21,7 @@ import {
   listTransactions,
   listUncategorizedTransactions,
   removeTransactionCategory,
+  updateAiSettings,
   updateRule,
   updateCategory,
 } from './db'
@@ -148,6 +150,17 @@ app.whenReady().then(() => {
     return deleteRule(payload.id)
   })
   ipcMain.handle('rules:apply', () => applyRulesToUncategorized())
+  ipcMain.handle('ai:settings:get', () => getAiSettings())
+  ipcMain.handle('ai:settings:update', (_event, payload) =>
+    updateAiSettings({
+      model: payload?.model,
+      enabled: payload?.enabled,
+      confidenceThreshold: payload?.confidenceThreshold,
+    })
+  )
+  ipcMain.handle('ai:key:status', () => ({
+    present: Boolean(process.env.OPENAI_API_KEY),
+  }))
   ipcMain.handle('transactions:list', (_event, filters) =>
     listTransactions(filters)
   )

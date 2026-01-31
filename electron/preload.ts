@@ -74,4 +74,13 @@ contextBridge.exposeInMainWorld('api', {
     delete: (payload: { id: number }) => ipcRenderer.invoke('rules:delete', payload),
     apply: () => ipcRenderer.invoke('rules:apply'),
   },
+  ai: {
+    getSettings: () => ipcRenderer.invoke('ai:settings:get'),
+    updateSettings: (payload: {
+      model?: string
+      enabled?: number
+      confidenceThreshold?: number
+    }) => ipcRenderer.invoke('ai:settings:update', payload),
+    keyStatus: () => ipcRenderer.invoke('ai:key:status'),
+  },
 })

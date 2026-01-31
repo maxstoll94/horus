@@ -90,5 +90,24 @@ interface Window {
       delete: (payload: { id: number }) => Promise<boolean>
       apply: () => Promise<{ applied: number; transactionsMatched: number }>
     }
+    ai: {
+      getSettings: () => Promise<{
+        id: number
+        model: string
+        enabled: number
+        confidenceThreshold: number
+      }>
+      updateSettings: (payload: {
+        model?: string
+        enabled?: number
+        confidenceThreshold?: number
+      }) => Promise<{
+        id: number
+        model: string
+        enabled: number
+        confidenceThreshold: number
+      }>
+      keyStatus: () => Promise<{ present: boolean }>
+    }
   }
 }

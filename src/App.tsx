@@ -51,7 +51,7 @@ function App() {
   const [newCategoryColor, setNewCategoryColor] = useState('#4c7cff')
   const [categoryStatus, setCategoryStatus] = useState<string>('')
   const [activeView, setActiveView] = useState<
-    'transactions' | 'categories' | 'categorization' | 'rules'
+    'transactions' | 'categories' | 'categorization' | 'rules' | 'ai'
   >('transactions')
   const [categorizationTab, setCategorizationTab] = useState<
     'uncategorized' | 'categorized'
@@ -65,6 +65,12 @@ function App() {
   const [rulesStatus, setRulesStatus] = useState<string>('')
   const [rulesStatusModal, setRulesStatusModal] = useState<string | null>(null)
   const [newRuleModalOpen, setNewRuleModalOpen] = useState(false)
+  const [aiSettings, setAiSettings] = useState<{
+    model: string
+    enabled: number
+    confidenceThreshold: number
+  } | null>(null)
+  const [aiKeyPresent, setAiKeyPresent] = useState<boolean | null>(null)
   const [rules, setRules] = useState<
     Array<{
       id: number
@@ -494,12 +500,24 @@ function App() {
     setRuleEdits({})
   }
 
+  const loadAiSettings = async () => {
+    const settings = await window.api.ai.getSettings()
+    const keyStatus = await window.api.ai.keyStatus()
+    setAiSettings({
+      model: settings.model,
+      enabled: settings.enabled,
+      confidenceThreshold: settings.confidenceThreshold,
+    })
+    setAiKeyPresent(keyStatus.present)
+  }
+
   useEffect(() => {
     loadTransactions()
     loadUncategorized()
     loadCategorized()
     loadCategories()
     loadRules()
+    loadAiSettings()
   }, [])
 
   useEffect(() => {
@@ -730,6 +748,12 @@ function App() {
             Rules
           </button>
           <button
+            className={activeView === 'ai' ? 'active' : ''}
+            onClick={() => setActiveView('ai')}
+          >
+            AI Settings
+          </button>
+          <button
             className={activeView === 'categories' ? 'active' : ''}
             onClick={() => setActiveView('categories')}
           >
@@ -929,6 +953,84 @@ function App() {
               columns={rulesColumns}
               emptyMessage="No rules yet."
             />
+          </div>
+        )}
+        {activeView === 'ai' && (
+          <div className="card">
+            <div className="card-header">
+              <h2>AI Settings</h2>
+              <button onClick={loadAiSettings}>Refresh</button>
+            </div>
+            <div className="status">
+              <strong>API key:</strong>{' '}
+              {aiKeyPresent === null
+                ? 'Checking...'
+                : aiKeyPresent
+                ? 'Present'
+                : 'Missing'}
+            </div>
+            {aiSettings && (
+              <div className="ai-form">
+                <label>
+                  Model
+                  <input
+                    type="text"
+                    value={aiSettings.model}
+                    onChange={(event) =>
+                      setAiSettings({
+                        ...aiSettings,
+                        model: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Enabled
+                  <input
+                    type="checkbox"
+                    checked={aiSettings.enabled === 1}
+                    onChange={(event) =>
+                      setAiSettings({
+                        ...aiSettings,
+                        enabled: event.target.checked ? 1 : 0,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Confidence threshold
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={aiSettings.confidenceThreshold}
+                    onChange={(event) =>
+                      setAiSettings({
+                        ...aiSettings,
+                        confidenceThreshold: Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+                <button
+                  onClick={async () => {
+                    const updated = await window.api.ai.updateSettings({
+                      model: aiSettings.model,
+                      enabled: aiSettings.enabled,
+                      confidenceThreshold: aiSettings.confidenceThreshold,
+                    })
+                    setAiSettings({
+                      model: updated.model,
+                      enabled: updated.enabled,
+                      confidenceThreshold: updated.confidenceThreshold,
+                    })
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
