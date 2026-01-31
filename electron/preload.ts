@@ -27,4 +27,12 @@ contextBridge.exposeInMainWorld('api', {
   db: {
     getInfo: () => ipcRenderer.invoke('db:get-info'),
   },
+  import: {
+    pickFile: () => ipcRenderer.invoke('import:pick-file'),
+    dkb: (filePath: string) => ipcRenderer.invoke('import:dkb', filePath),
+  },
+  transactions: {
+    list: (filters?: { limit?: number; offset?: number }) =>
+      ipcRenderer.invoke('transactions:list', filters),
+  },
 })

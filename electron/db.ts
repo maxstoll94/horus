@@ -6,6 +6,7 @@ const require = createRequire(import.meta.url)
 const Database = require('better-sqlite3') as typeof import('better-sqlite3')
 
 type DatabaseInstance = import('better-sqlite3').Database
+type RunResult = import('better-sqlite3').RunResult
 
 const SCHEMA_VERSION = 1
 let dbInstance: DatabaseInstance | null = null
@@ -131,4 +132,124 @@ export function getDatabaseInfo() {
     path: dbPath,
     schemaVersion,
   }
+}
+
+export type TransactionInsert = {
+  account?: string | null
+  bookingDate: string
+  valueDate?: string | null
+  amount: number
+  currency: string
+  payee?: string | null
+  purpose?: string | null
+  iban?: string | null
+  bic?: string | null
+  reference?: string | null
+  rawHash: string
+}
+
+export function insertImport(source: string, fileName: string) {
+  const db = initializeDatabase()
+  const stmt = db.prepare(
+    `INSERT INTO imports (source, file_name) VALUES (?, ?)`
+  )
+  const result = stmt.run(source, fileName) as RunResult
+
+  return result.lastInsertRowid as number
+}
+
+export function insertTransactions(rows: TransactionInsert[]) {
+  const db = initializeDatabase()
+  const insertStmt = db.prepare(`
+    INSERT INTO transactions (
+      account,
+      booking_date,
+      value_date,
+      amount,
+      currency,
+      payee,
+      purpose,
+      iban,
+      bic,
+      reference,
+      raw_hash
+    ) VALUES (
+      @account,
+      @bookingDate,
+      @valueDate,
+      @amount,
+      @currency,
+      @payee,
+      @purpose,
+      @iban,
+      @bic,
+      @reference,
+      @rawHash
+    )
+  `)
+
+  let inserted = 0
+  let skipped = 0
+
+  const transaction = db.transaction((items: TransactionInsert[]) => {
+    for (const item of items) {
+      try {
+        insertStmt.run(item)
+        inserted += 1
+      } catch (error) {
+        const message = error instanceof Error ? error.message : ''
+        if (message.includes('UNIQUE constraint failed: transactions.raw_hash')) {
+          skipped += 1
+          continue
+        }
+
+        throw error
+      }
+    }
+  })
+
+  transaction(rows)
+
+  return { inserted, skipped }
+}
+
+export type TransactionRow = {
+  id: number
+  bookingDate: string
+  amount: number
+  currency: string
+  payee: string | null
+  purpose: string | null
+  categoryId: number | null
+}
+
+export type TransactionListFilters = {
+  limit?: number
+  offset?: number
+}
+
+export function listTransactions(filters: TransactionListFilters = {}) {
+  const db = initializeDatabase()
+  const limit = filters.limit ?? 200
+  const offset = filters.offset ?? 0
+
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          id,
+          booking_date as bookingDate,
+          amount,
+          currency,
+          payee,
+          purpose,
+          category_id as categoryId
+        FROM transactions
+        ORDER BY booking_date DESC, id DESC
+        LIMIT ? OFFSET ?
+      `
+    )
+    .all(limit, offset) as TransactionRow[]
+
+  return rows
 }

@@ -1,8 +1,10 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { closeDatabase, getDatabaseInfo, initializeDatabase } from './db'
+import { readFile } from 'node:fs/promises'
+import { closeDatabase, getDatabaseInfo, initializeDatabase, insertImport, insertTransactions, listTransactions } from './db'
+import { parseDkbCsv } from './importers/dkb'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -73,5 +75,43 @@ app.on('activate', () => {
 app.whenReady().then(() => {
   initializeDatabase()
   ipcMain.handle('db:get-info', () => getDatabaseInfo())
+  ipcMain.handle('transactions:list', (_event, filters) =>
+    listTransactions(filters)
+  )
+  ipcMain.handle('import:pick-file', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Select DKB CSV file',
+      properties: ['openFile'],
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+
+    return result.filePaths[0]
+  })
+  ipcMain.handle('import:dkb', async (_event, filePath: string) => {
+    if (!filePath) {
+      return { success: false, error: 'No file path provided.' }
+    }
+
+    const contents = await readFile(filePath, 'utf-8')
+    const { transactions, warnings } = parseDkbCsv(contents)
+
+    if (transactions.length === 0) {
+      return { success: false, error: 'No transactions found.', warnings }
+    }
+
+    insertImport('dkb', path.basename(filePath))
+    const { inserted, skipped } = insertTransactions(transactions)
+
+    return {
+      success: true,
+      inserted,
+      skipped,
+      warnings,
+    }
+  })
   createWindow()
 })

@@ -1,42 +1,78 @@
 #root {
-  max-width: 1280px;
+  max-width: 900px;
   margin: 0 auto;
   padding: 2rem;
-  text-align: center;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
-}
-
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
 }
 
 .card {
-  padding: 2em;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+  padding: 1.5rem;
+  background: #141414;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
-.read-the-docs {
-  color: #888;
+button {
+  margin-right: 0.5rem;
+}
+
+.status,
+.path {
+  font-size: 0.95rem;
+}
+
+.warnings ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.table {
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.table-row {
+  display: grid;
+  grid-template-columns: 120px 1.4fr 2fr 120px;
+  gap: 0.75rem;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.table-row:last-child {
+  border-bottom: none;
+}
+
+.table-head {
+  background: #1f1f1f;
+  font-weight: 600;
+}
+
+.table-row.empty {
+  grid-template-columns: 1fr;
+}
+
+.table-row .purpose {
+  color: #c8c8c8;
+  font-size: 0.95rem;
+}
+
+.amount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
