@@ -3,7 +3,21 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { readFile } from 'node:fs/promises'
-import { closeDatabase, createCategory, getDatabaseInfo, initializeDatabase, insertImport, insertTransactions, listCategories, listTransactions, updateCategory } from './db'
+import {
+  addTransactionCategory,
+  closeDatabase,
+  createCategory,
+  getDatabaseInfo,
+  initializeDatabase,
+  insertImport,
+  insertTransactions,
+  listCategories,
+  listCategorizedTransactions,
+  listTransactions,
+  listUncategorizedTransactions,
+  removeTransactionCategory,
+  updateCategory,
+} from './db'
 import { parseDkbCsv } from './importers/dkb'
 
 const require = createRequire(import.meta.url)
@@ -100,6 +114,24 @@ app.whenReady().then(() => {
   ipcMain.handle('transactions:list', (_event, filters) =>
     listTransactions(filters)
   )
+  ipcMain.handle('transactions:uncategorized', (_event, filters) =>
+    listUncategorizedTransactions(filters)
+  )
+  ipcMain.handle('transactions:categorized', (_event, filters) =>
+    listCategorizedTransactions(filters)
+  )
+  ipcMain.handle('transactions:add-category', (_event, payload) => {
+    if (!payload?.transactionId || !payload?.categoryId) {
+      return false
+    }
+    return addTransactionCategory(payload.transactionId, payload.categoryId)
+  })
+  ipcMain.handle('transactions:remove-category', (_event, payload) => {
+    if (!payload?.transactionId || !payload?.categoryId) {
+      return false
+    }
+    return removeTransactionCategory(payload.transactionId, payload.categoryId)
+  })
   ipcMain.handle('import:pick-file', async () => {
     const result = await dialog.showOpenDialog({
       title: 'Select DKB CSV file',

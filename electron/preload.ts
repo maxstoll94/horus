@@ -34,5 +34,24 @@ contextBridge.exposeInMainWorld('api', {
   transactions: {
     list: (filters?: { limit?: number; offset?: number }) =>
       ipcRenderer.invoke('transactions:list', filters),
+    listUncategorized: (filters?: { limit?: number; offset?: number }) =>
+      ipcRenderer.invoke('transactions:uncategorized', filters),
+    listCategorized: (filters?: { limit?: number; offset?: number }) =>
+      ipcRenderer.invoke('transactions:categorized', filters),
+    addCategory: (payload: { transactionId: number; categoryId: number }) =>
+      ipcRenderer.invoke('transactions:add-category', payload),
+    removeCategory: (payload: { transactionId: number; categoryId: number }) =>
+      ipcRenderer.invoke('transactions:remove-category', payload),
+  },
+  categories: {
+    list: () => ipcRenderer.invoke('categories:list'),
+    create: (payload: { name: string; color?: string | null }) =>
+      ipcRenderer.invoke('categories:create', payload),
+    update: (payload: {
+      id: number
+      name?: string
+      color?: string | null
+      isActive?: number
+    }) => ipcRenderer.invoke('categories:update', payload),
   },
 })

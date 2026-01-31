@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 
 type TransactionRow = {
@@ -8,7 +8,12 @@ type TransactionRow = {
   currency: string
   payee: string | null
   purpose: string | null
-  categoryId: number | null
+  categoryCount: number
+}
+
+type CategorizedTransactionRow = TransactionRow & {
+  categoryId: number
+  categoryName: string
 }
 
 type CategoryRow = {
@@ -18,21 +23,33 @@ type CategoryRow = {
   isActive: number
 }
 
+type CategorizedViewRow = TransactionRow & {
+  categories: { id: number; name: string }[]
+}
+
 function App() {
   const [filePath, setFilePath] = useState<string | null>(null)
   const [status, setStatus] = useState<string>('Idle')
   const [warnings, setWarnings] = useState<string[]>([])
   const [transactions, setTransactions] = useState<TransactionRow[]>([])
+  const [uncategorized, setUncategorized] = useState<TransactionRow[]>([])
+  const [categorized, setCategorized] = useState<CategorizedViewRow[]>([])
   const [loadingTransactions, setLoadingTransactions] = useState(false)
   const [categories, setCategories] = useState<CategoryRow[]>([])
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newCategoryColor, setNewCategoryColor] = useState('#4c7cff')
   const [categoryStatus, setCategoryStatus] = useState<string>('')
-  const [activeView, setActiveView] = useState<'transactions' | 'categories'>(
-    'transactions'
-  )
+  const [activeView, setActiveView] = useState<
+    'transactions' | 'categories' | 'categorization'
+  >('transactions')
+  const [categorizationTab, setCategorizationTab] = useState<
+    'uncategorized' | 'categorized'
+  >('uncategorized')
   const [page, setPage] = useState(0)
+  const [uncategorizedPage, setUncategorizedPage] = useState(0)
+  const [categorizedPage, setCategorizedPage] = useState(0)
   const [pageSize, setPageSize] = useState(20)
+  const [selection, setSelection] = useState<Record<number, number>>({})
 
   const loadTransactions = async () => {
     setLoadingTransactions(true)
@@ -44,6 +61,40 @@ function App() {
     setLoadingTransactions(false)
   }
 
+  const loadUncategorized = async () => {
+    const rows = await window.api.transactions.listUncategorized({
+      limit: pageSize,
+      offset: uncategorizedPage * pageSize,
+    })
+    setUncategorized(rows)
+  }
+
+  const loadCategorized = async () => {
+    const rows = await window.api.transactions.listCategorized({
+      limit: pageSize,
+      offset: categorizedPage * pageSize,
+    })
+    const grouped = new Map<number, CategorizedViewRow>()
+    rows.forEach((row) => {
+      const existing = grouped.get(row.id)
+      if (!existing) {
+        grouped.set(row.id, {
+          id: row.id,
+          bookingDate: row.bookingDate,
+          amount: row.amount,
+          currency: row.currency,
+          payee: row.payee,
+          purpose: row.purpose,
+          categoryCount: row.categoryCount,
+          categories: [{ id: row.categoryId, name: row.categoryName }],
+        })
+      } else {
+        existing.categories.push({ id: row.categoryId, name: row.categoryName })
+      }
+    })
+    setCategorized(Array.from(grouped.values()))
+  }
+
   const loadCategories = async () => {
     const rows = await window.api.categories.list()
     setCategories(rows)
@@ -51,12 +102,22 @@ function App() {
 
   useEffect(() => {
     loadTransactions()
+    loadUncategorized()
+    loadCategorized()
     loadCategories()
   }, [])
 
   useEffect(() => {
     loadTransactions()
   }, [page, pageSize])
+
+  useEffect(() => {
+    loadUncategorized()
+  }, [uncategorizedPage, pageSize])
+
+  useEffect(() => {
+    loadCategorized()
+  }, [categorizedPage, pageSize])
 
   useEffect(() => {
     const updatePageSize = () => {
@@ -66,6 +127,8 @@ function App() {
       const nextSize = Math.max(10, Math.floor(available / estimatedRowHeight))
       setPageSize(nextSize)
       setPage(0)
+      setUncategorizedPage(0)
+      setCategorizedPage(0)
     }
 
     updatePageSize()
@@ -92,6 +155,8 @@ function App() {
     if (result.success) {
       setStatus(`Imported ${result.inserted} rows (skipped ${result.skipped}).`)
       loadTransactions()
+      loadUncategorized()
+      loadCategorized()
     } else {
       setStatus(`Import failed: ${result.error ?? 'Unknown error'}`)
     }
@@ -133,6 +198,33 @@ function App() {
     loadCategories()
   }
 
+  const activeCategories = useMemo(
+    () => categories.filter((cat) => cat.isActive === 1),
+    [categories]
+  )
+
+  const assignCategory = async (transactionId: number) => {
+    const categoryId = selection[transactionId]
+    if (!categoryId) {
+      return
+    }
+
+    await window.api.transactions.addCategory({ transactionId, categoryId })
+    setSelection((current) => {
+      const next = { ...current }
+      delete next[transactionId]
+      return next
+    })
+    loadUncategorized()
+    loadCategorized()
+  }
+
+  const removeCategory = async (transactionId: number, categoryId: number) => {
+    await window.api.transactions.removeCategory({ transactionId, categoryId })
+    loadUncategorized()
+    loadCategorized()
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -143,6 +235,12 @@ function App() {
             onClick={() => setActiveView('transactions')}
           >
             Transactions
+          </button>
+          <button
+            className={activeView === 'categorization' ? 'active' : ''}
+            onClick={() => setActiveView('categorization')}
+          >
+            Categorization
           </button>
           <button
             className={activeView === 'categories' ? 'active' : ''}
@@ -227,6 +325,168 @@ function App() {
             </div>
           </>
         )}
+        {activeView === 'categorization' && (
+          <div className="card">
+            <div className="card-header">
+              <h2>Categorization</h2>
+              <div className="actions">
+                <button
+                  className={categorizationTab === 'uncategorized' ? 'active' : ''}
+                  onClick={() => setCategorizationTab('uncategorized')}
+                >
+                  Uncategorized
+                </button>
+                <button
+                  className={categorizationTab === 'categorized' ? 'active' : ''}
+                  onClick={() => setCategorizationTab('categorized')}
+                >
+                  Categorized
+                </button>
+              </div>
+            </div>
+            {categorizationTab === 'uncategorized' && (
+              <>
+                <div className="card-header subheader">
+                  <h3>Uncategorized</h3>
+                  <div className="actions">
+                    <button
+                      onClick={() => setUncategorizedPage(0)}
+                      disabled={uncategorizedPage === 0}
+                    >
+                      First
+                    </button>
+                    <button
+                      onClick={() => setUncategorizedPage((p) => Math.max(0, p - 1))}
+                      disabled={uncategorizedPage === 0}
+                    >
+                      Prev
+                    </button>
+                    <span className="page-indicator">Page {uncategorizedPage + 1}</span>
+                    <button
+                      onClick={() => setUncategorizedPage((p) => p + 1)}
+                      disabled={uncategorized.length < pageSize}
+                    >
+                      Next
+                    </button>
+                    <button onClick={loadUncategorized}>Refresh</button>
+                  </div>
+                </div>
+                <div className="table">
+                  <div className="table-row table-head categorize-row">
+                    <div>Date</div>
+                    <div>Payee</div>
+                    <div>Purpose</div>
+                    <div className="amount">Amount</div>
+                    <div>Category</div>
+                    <div></div>
+                  </div>
+                  {uncategorized.length === 0 && (
+                    <div className="table-row empty">
+                      All transactions are categorized.
+                    </div>
+                  )}
+                  {uncategorized.map((tx) => (
+                    <div className="table-row categorize-row" key={tx.id}>
+                      <div>{tx.bookingDate}</div>
+                      <div>{tx.payee ?? '-'}</div>
+                      <div className="purpose">{tx.purpose ?? '-'}</div>
+                      <div className="amount">
+                        {tx.amount.toFixed(2)} {tx.currency}
+                      </div>
+                      <select
+                        value={selection[tx.id] ?? ''}
+                        onChange={(event) =>
+                          setSelection((current) => ({
+                            ...current,
+                            [tx.id]: Number(event.target.value),
+                          }))
+                        }
+                      >
+                        <option value="">Select...</option>
+                        {activeCategories.map((cat) => (
+                          <option key={cat.id} value={cat.id}>
+                            {cat.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => assignCategory(tx.id)}
+                        disabled={!selection[tx.id]}
+                      >
+                        Add
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {categorizationTab === 'categorized' && (
+              <>
+                <div className="card-header subheader">
+                  <h3>Categorized</h3>
+                  <div className="actions">
+                    <button
+                      onClick={() => setCategorizedPage(0)}
+                      disabled={categorizedPage === 0}
+                    >
+                      First
+                    </button>
+                    <button
+                      onClick={() => setCategorizedPage((p) => Math.max(0, p - 1))}
+                      disabled={categorizedPage === 0}
+                    >
+                      Prev
+                    </button>
+                    <span className="page-indicator">Page {categorizedPage + 1}</span>
+                    <button
+                      onClick={() => setCategorizedPage((p) => p + 1)}
+                      disabled={categorized.length < pageSize}
+                    >
+                      Next
+                    </button>
+                    <button onClick={loadCategorized}>Refresh</button>
+                  </div>
+                </div>
+                <div className="table">
+                  <div className="table-row table-head categorized-row">
+                    <div>Date</div>
+                    <div>Payee</div>
+                    <div>Purpose</div>
+                    <div className="amount">Amount</div>
+                    <div>Categories</div>
+                  </div>
+                  {categorized.length === 0 && (
+                    <div className="table-row empty">
+                      No categorized transactions yet.
+                    </div>
+                  )}
+                  {categorized.map((tx) => (
+                    <div className="table-row categorized-row" key={tx.id}>
+                      <div>{tx.bookingDate}</div>
+                      <div>{tx.payee ?? '-'}</div>
+                      <div className="purpose">{tx.purpose ?? '-'}</div>
+                      <div className="amount">
+                        {tx.amount.toFixed(2)} {tx.currency}
+                      </div>
+                      <div className="chips">
+                        {tx.categories.map((cat) => (
+                          <button
+                            key={cat.id}
+                            className="chip"
+                            onClick={() => removeCategory(tx.id, cat.id)}
+                          >
+                            {cat.name}
+                            <span className="chip-remove">×</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
         {activeView === 'categories' && (
           <div className="card">
             <div className="card-header">
@@ -278,7 +538,9 @@ function App() {
                       type="checkbox"
                       checked={cat.isActive === 1}
                       onChange={(event) =>
-                        updateCategory(cat, { isActive: event.target.checked ? 1 : 0 })
+                        updateCategory(cat, {
+                          isActive: event.target.checked ? 1 : 0,
+                        })
                       }
                     />
                     <span>{cat.isActive === 1 ? 'Active' : 'Inactive'}</span>

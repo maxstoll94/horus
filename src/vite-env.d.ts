@@ -23,8 +23,45 @@ interface Window {
         currency: string
         payee: string | null
         purpose: string | null
-        categoryId: number | null
+        categoryCount: number
       }>>
+      listUncategorized: (filters?: { limit?: number; offset?: number }) => Promise<Array<{
+        id: number
+        bookingDate: string
+        amount: number
+        currency: string
+        payee: string | null
+        purpose: string | null
+        categoryCount: number
+      }>>
+      listCategorized: (filters?: { limit?: number; offset?: number }) => Promise<Array<{
+        id: number
+        bookingDate: string
+        amount: number
+        currency: string
+        payee: string | null
+        purpose: string | null
+        categoryCount: number
+        categoryId: number
+        categoryName: string
+      }>>
+      addCategory: (payload: { transactionId: number; categoryId: number }) => Promise<boolean>
+      removeCategory: (payload: { transactionId: number; categoryId: number }) => Promise<boolean>
+    }
+    categories: {
+      list: () => Promise<Array<{
+        id: number
+        name: string
+        color: string | null
+        isActive: number
+      }>>
+      create: (payload: { name: string; color?: string | null }) => Promise<number | null>
+      update: (payload: {
+        id: number
+        name?: string
+        color?: string | null
+        isActive?: number
+      }) => Promise<boolean>
     }
   }
 }
