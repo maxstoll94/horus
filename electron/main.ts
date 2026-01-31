@@ -31,6 +31,7 @@ import {
   updateAiSettings,
   updateRule,
   updateCategory,
+  deleteCategory,
 } from './db'
 import { parseDkbCsv } from './importers/dkb'
 import { suggestCategories } from './ai'
@@ -125,6 +126,12 @@ app.whenReady().then(() => {
       color: payload?.color,
       isActive: payload?.isActive,
     })
+  })
+  ipcMain.handle('categories:delete', (_event, payload) => {
+    if (!payload?.id) {
+      return { deleted: false, archived: false }
+    }
+    return deleteCategory(payload.id)
   })
   ipcMain.handle('rules:list', () => listRules())
   ipcMain.handle('rules:create', (_event, payload) => {

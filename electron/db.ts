@@ -8,7 +8,7 @@ const Database = require('better-sqlite3') as typeof import('better-sqlite3')
 type DatabaseInstance = import('better-sqlite3').Database
 type RunResult = import('better-sqlite3').RunResult
 
-const SCHEMA_VERSION = 7
+const SCHEMA_VERSION = 8
 let dbInstance: DatabaseInstance | null = null
 
 function getDatabasePath() {
@@ -349,6 +349,30 @@ function applyMigrations(db: DatabaseInstance) {
 
       db.exec(`INSERT INTO schema_migrations (version) VALUES (7);`)
     }
+
+    if (currentVersion < 8) {
+      db.exec(`
+        INSERT INTO categories (name, color)
+        SELECT name, color
+        FROM (
+          SELECT 'Income' as name, '#2b4cff' as color UNION ALL
+          SELECT 'Interest', '#6fd1ff' UNION ALL
+          SELECT 'Investing', '#6fd1ff' UNION ALL
+          SELECT 'Internal Transfer', '#9aa0a6' UNION ALL
+          SELECT 'Coffee', '#c18b5f' UNION ALL
+          SELECT 'Groceries', '#7ddc7d' UNION ALL
+          SELECT 'Take Away', '#f2c14e' UNION ALL
+          SELECT 'Fees', '#ff7a7a' UNION ALL
+          SELECT 'Public Transport', '#8dd3c7' UNION ALL
+          SELECT 'Car', '#a18bff' UNION ALL
+          SELECT 'Hobby', '#ffb3c6' UNION ALL
+          SELECT 'Healthcare', '#ff9f1c'
+        )
+        WHERE NOT EXISTS (SELECT 1 FROM categories);
+      `)
+
+      db.exec(`INSERT INTO schema_migrations (version) VALUES (8);`)
+    }
   })()
 }
 
@@ -574,6 +598,7 @@ export function listDashboardCategorySpend(month: string) {
         SELECT
           c.id as categoryId,
           c.name as categoryName,
+          c.color as categoryColor,
           COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END), 0) as totalSpend,
           COUNT(1) as transactionCount
         FROM transaction_categories tc
@@ -582,6 +607,7 @@ export function listDashboardCategorySpend(month: string) {
         INNER JOIN categories c
           ON c.id = tc.category_id
         WHERE substr(t.booking_date, 1, 7) = ?
+          AND t.amount < 0
         GROUP BY c.id, c.name
         ORDER BY totalSpend DESC, c.name ASC
       `
@@ -1315,4 +1341,26 @@ export function updateCategory(
   ).run(nextName, nextColor, nextIsActive, id)
 
   return true
+}
+
+export function deleteCategory(id: number) {
+  const db = initializeDatabase()
+  try {
+    const result = db.prepare(`DELETE FROM categories WHERE id = ?`).run(id) as RunResult
+    return { deleted: result.changes > 0, archived: false }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    if (message.includes('FOREIGN KEY')) {
+      db.prepare(
+        `
+          UPDATE categories
+          SET is_active = 0,
+              updated_at = datetime('now')
+          WHERE id = ?
+        `
+      ).run(id)
+      return { deleted: false, archived: true }
+    }
+    throw error
+  }
 }

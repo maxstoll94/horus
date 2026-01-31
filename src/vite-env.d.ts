@@ -62,6 +62,10 @@ interface Window {
         color?: string | null
         isActive?: number
       }) => Promise<boolean>
+      delete: (payload: { id: number }) => Promise<{
+        deleted: boolean
+        archived: boolean
+      }>
     }
     rules: {
       list: () => Promise<Array<{

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
+import Select from 'react-select'
 import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -49,6 +51,36 @@ type RuleDraft = {
   isActive: number
 }
 
+type CategoryOption = {
+  value: number
+  label: string
+}
+
+type CategoryTableMeta = {
+  categoryEdits: Record<
+    number,
+    {
+      name: string
+      color: string | null
+      isActive: number
+    }
+  >
+  setCategoryEdits: React.Dispatch<
+    React.SetStateAction<
+      Record<
+        number,
+        {
+          name: string
+          color: string | null
+          isActive: number
+        }
+      >
+    >
+  >
+  saveCategory: (id: number) => void
+  deleteCategoryRow: (id: number) => void
+}
+
 function App() {
   const [filePath, setFilePath] = useState<string | null>(null)
   const [status, setStatus] = useState<string>('Idle')
@@ -61,6 +93,17 @@ function App() {
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newCategoryColor, setNewCategoryColor] = useState('#4c7cff')
   const [categoryStatus, setCategoryStatus] = useState<string>('')
+  const [newCategoryModalOpen, setNewCategoryModalOpen] = useState(false)
+  const [categoryEdits, setCategoryEdits] = useState<
+    Record<
+      number,
+      {
+        name: string
+        color: string | null
+        isActive: number
+      }
+    >
+  >({})
   const [activeView, setActiveView] = useState<
     'dashboard' | 'transactions' | 'categories' | 'categorization' | 'rules' | 'ai'
   >('dashboard')
@@ -70,12 +113,16 @@ function App() {
   const [page, setPage] = useState(0)
   const [uncategorizedPage, setUncategorizedPage] = useState(0)
   const [categorizedPage, setCategorizedPage] = useState(0)
-  const [pageSize, setPageSize] = useState(20)
-  const [selection, setSelection] = useState<Record<number, number>>({})
+  const [pageSizeTransactions, setPageSizeTransactions] = useState(20)
+  const [pageSizeUncategorized, setPageSizeUncategorized] = useState(16)
+  const [pageSizeCategorized, setPageSizeCategorized] = useState(16)
+  const [selection, setSelection] = useState<Record<number, number[]>>({})
+  const [categorizedFilter, setCategorizedFilter] = useState<number[]>([])
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null)
   const [rulesStatus, setRulesStatus] = useState<string>('')
   const [rulesStatusModal, setRulesStatusModal] = useState<string | null>(null)
   const [newRuleModalOpen, setNewRuleModalOpen] = useState(false)
+  const [ruleMenuOpen, setRuleMenuOpen] = useState<Record<number, boolean>>({})
   const [aiSuggestions, setAiSuggestions] = useState<
     Record<
       number,
@@ -152,6 +199,7 @@ function App() {
       categoryName: string
       totalSpend: number
       transactionCount: number
+      categoryColor: string | null
     }>
   >([])
   const [dashboardTrend, setDashboardTrend] = useState<
@@ -163,10 +211,43 @@ function App() {
     }>
   >([])
 
+  const dashboardSpendCategories = useMemo(
+    () => dashboardCategories.filter((row) => row.totalSpend > 0),
+    [dashboardCategories]
+  )
+
   const activeCategories = useMemo(
     () => categories.filter((cat) => cat.isActive === 1),
     [categories]
   )
+
+  const categoryOptions = useMemo<CategoryOption[]>(
+    () =>
+      activeCategories.map((cat) => ({
+        value: cat.id,
+        label: cat.name,
+      })),
+    [activeCategories]
+  )
+
+  const categoryFilterOptions = useMemo<CategoryOption[]>(
+    () =>
+      categories.map((cat) => ({
+        value: cat.id,
+        label: cat.name,
+      })),
+    [categories]
+  )
+
+  const filteredCategorized = useMemo(() => {
+    if (categorizedFilter.length === 0) {
+      return categorized
+    }
+    const selected = new Set(categorizedFilter)
+    return categorized.filter((row) =>
+      row.categories.some((cat) => selected.has(cat.id))
+    )
+  }, [categorized, categorizedFilter])
 
   const transactionColumns = useMemo<ColumnDef<TransactionRow>[]>(
     () => [
@@ -224,22 +305,78 @@ function App() {
         id: 'category',
         header: 'Category',
         cell: ({ row }) => (
-          <select
-            value={selection[row.original.id] ?? ''}
-            onChange={(event) =>
+          <div className="multi-select-cell">
+          <Select
+            className="multi-select"
+            classNamePrefix="rs"
+            isMulti
+            isSearchable
+            options={categoryOptions}
+            value={categoryOptions.filter((option) =>
+              (selection[row.original.id] ?? []).includes(option.value)
+            )}
+            onChange={(values) =>
               setSelection((current) => ({
                 ...current,
-                [row.original.id]: Number(event.target.value),
+                [row.original.id]: values.map((option) => option.value),
               }))
             }
-          >
-            <option value="">Select...</option>
-            {activeCategories.map((cat) => (
-              <option key={cat.id} value={cat.id}>
-                {cat.name}
-              </option>
-            ))}
-          </select>
+            placeholder="Select categories..."
+            menuPortalTarget={document.body}
+            menuPosition="fixed"
+            styles={{
+              control: (base, state) => ({
+                ...base,
+                backgroundColor: '#101010',
+                borderColor: state.isFocused ? '#2b4cff' : '#2a2a2a',
+                boxShadow: state.isFocused ? '0 0 0 1px #2b4cff' : 'none',
+                minHeight: 34,
+              }),
+              menu: (base) => ({
+                ...base,
+                backgroundColor: '#141414',
+                border: '1px solid #2a2a2a',
+                color: '#f0f0f0',
+              }),
+              menuPortal: (base) => ({
+                ...base,
+                zIndex: 9999,
+              }),
+              option: (base, state) => ({
+                ...base,
+                backgroundColor: state.isSelected
+                  ? '#2b4cff'
+                  : state.isFocused
+                  ? '#1f2338'
+                  : '#141414',
+                color: '#f0f0f0',
+              }),
+              singleValue: (base) => ({ ...base, color: '#f0f0f0' }),
+              placeholder: (base) => ({ ...base, color: '#bdbdbd' }),
+              input: (base) => ({ ...base, color: '#f0f0f0' }),
+              multiValue: (base) => ({
+                ...base,
+                backgroundColor: '#1b1f33',
+                border: '1px solid #2b4cff',
+              }),
+              multiValueLabel: (base) => ({ ...base, color: '#e6e9ff' }),
+              multiValueRemove: (base) => ({ ...base, color: '#cbd3ff' }),
+            }}
+          />
+            {(selection[row.original.id] ?? []).length > 0 && (
+              <div className="chips compact">
+                {categoryOptions
+                  .filter((option) =>
+                    (selection[row.original.id] ?? []).includes(option.value)
+                  )
+                  .map((option) => (
+                    <span key={option.value} className="chip">
+                      {option.label}
+                    </span>
+                  ))}
+              </div>
+            )}
+          </div>
         ),
       },
       {
@@ -248,7 +385,7 @@ function App() {
         cell: ({ row }) => (
           <button
             onClick={() => assignCategory(row.original.id)}
-            disabled={!selection[row.original.id]}
+            disabled={(selection[row.original.id] ?? []).length === 0}
           >
             Add
           </button>
@@ -258,12 +395,40 @@ function App() {
         id: 'rule',
         header: '',
         cell: ({ row }) => (
-          <button
-            onClick={() => openRuleDraft(row.original)}
-            disabled={!selection[row.original.id]}
-          >
-            Create Rule
-          </button>
+          <div className="dropdown">
+            <div className="dropdown-split">
+              <button
+                className="dropdown-main"
+                onClick={() => createRuleFromPayee(row.original)}
+                disabled={(selection[row.original.id] ?? []).length === 0}
+              >
+                Create Rule
+              </button>
+              <button
+                className="dropdown-toggle"
+                onClick={() =>
+                  setRuleMenuOpen((current) => ({
+                    ...current,
+                    [row.original.id]: !current[row.original.id],
+                  }))
+                }
+                disabled={(selection[row.original.id] ?? []).length === 0}
+                aria-label="Open rule options"
+              >
+                ▾
+              </button>
+            </div>
+            {ruleMenuOpen[row.original.id] && (
+              <div className="dropdown-menu">
+                <button onClick={() => createRuleFromPayee(row.original)}>
+                  Create Rule
+                </button>
+                <button onClick={() => openRuleDraft(row.original)}>
+                  Custom
+                </button>
+              </div>
+            )}
+          </div>
         ),
       },
       {
@@ -293,7 +458,7 @@ function App() {
         },
       },
     ],
-    [activeCategories, selection, aiSuggestions]
+    [categoryOptions, selection, aiSuggestions]
   )
 
   const categorizedColumns = useMemo<ColumnDef<CategorizedViewRow>[]>(
@@ -347,46 +512,100 @@ function App() {
       {
         header: 'Name',
         accessorKey: 'name',
-        cell: ({ row }) => (
-          <input
-            type="text"
-            value={row.original.name}
-            onChange={(event) =>
-              updateCategory(row.original, { name: event.target.value })
-            }
-          />
-        ),
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as CategoryTableMeta
+          const draft = meta.categoryEdits[row.original.id] ?? row.original
+          return (
+            <input
+              type="text"
+              value={draft.name}
+              onChange={(event) =>
+                meta.setCategoryEdits((current) => ({
+                  ...current,
+                  [row.original.id]: {
+                    ...(current[row.original.id] ?? row.original),
+                    name: event.target.value,
+                  },
+                }))
+              }
+            />
+          )
+        },
       },
       {
         header: 'Color',
         accessorKey: 'color',
-        cell: ({ row }) => (
-          <input
-            type="color"
-            value={row.original.color ?? '#4c7cff'}
-            onChange={(event) =>
-              updateCategory(row.original, { color: event.target.value })
-            }
-          />
-        ),
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as CategoryTableMeta
+          const draft = meta.categoryEdits[row.original.id] ?? row.original
+          return (
+            <input
+              type="color"
+              value={draft.color ?? '#4c7cff'}
+              onChange={(event) =>
+                meta.setCategoryEdits((current) => ({
+                  ...current,
+                  [row.original.id]: {
+                    ...(current[row.original.id] ?? row.original),
+                    color: event.target.value,
+                  },
+                }))
+              }
+            />
+          )
+        },
       },
       {
         header: 'Status',
         id: 'status',
-        cell: ({ row }) => (
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={row.original.isActive === 1}
-              onChange={(event) =>
-                updateCategory(row.original, {
-                  isActive: event.target.checked ? 1 : 0,
-                })
-              }
-            />
-            <span>{row.original.isActive === 1 ? 'Active' : 'Inactive'}</span>
-          </label>
-        ),
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as CategoryTableMeta
+          const draft = meta.categoryEdits[row.original.id] ?? row.original
+          return (
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={draft.isActive === 1}
+                onChange={(event) =>
+                  meta.setCategoryEdits((current) => ({
+                    ...current,
+                    [row.original.id]: {
+                      ...(current[row.original.id] ?? row.original),
+                      isActive: event.target.checked ? 1 : 0,
+                    },
+                  }))
+                }
+              />
+              <span>{draft.isActive === 1 ? 'Active' : 'Inactive'}</span>
+            </label>
+          )
+        },
+      },
+      {
+        header: '',
+        id: 'actions',
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as CategoryTableMeta
+          const draft = meta.categoryEdits[row.original.id]
+          const hasChanges =
+            draft &&
+            (draft.name !== row.original.name ||
+              draft.color !== row.original.color ||
+              draft.isActive !== row.original.isActive)
+          return (
+            <div className="rule-actions">
+              <button
+                onClick={() => meta.saveCategory(row.original.id)}
+                disabled={!hasChanges}
+              >
+                Save
+              </button>
+              <button onClick={() => meta.deleteCategoryRow(row.original.id)}>
+                Delete
+              </button>
+            </div>
+          )
+        },
       },
     ],
     []
@@ -536,8 +755,8 @@ function App() {
   const loadTransactions = async () => {
     setLoadingTransactions(true)
     const rows = await window.api.transactions.list({
-      limit: pageSize,
-      offset: page * pageSize,
+      limit: pageSizeTransactions,
+      offset: page * pageSizeTransactions,
     })
     setTransactions(rows)
     setLoadingTransactions(false)
@@ -545,16 +764,16 @@ function App() {
 
   const loadUncategorized = async () => {
     const rows = await window.api.transactions.listUncategorized({
-      limit: pageSize,
-      offset: uncategorizedPage * pageSize,
+      limit: pageSizeUncategorized,
+      offset: uncategorizedPage * pageSizeUncategorized,
     })
     setUncategorized(rows)
   }
 
   const loadCategorized = async () => {
     const rows = await window.api.transactions.listCategorized({
-      limit: pageSize,
-      offset: categorizedPage * pageSize,
+      limit: pageSizeCategorized,
+      offset: categorizedPage * pageSizeCategorized,
     })
     const grouped = new Map<number, CategorizedViewRow>()
     rows.forEach((row) => {
@@ -580,6 +799,7 @@ function App() {
   const loadCategories = async () => {
     const rows = await window.api.categories.list()
     setCategories(rows)
+    setCategoryEdits({})
   }
 
   const loadRules = async () => {
@@ -675,35 +895,41 @@ function App() {
 
   useEffect(() => {
     loadTransactions()
-  }, [page, pageSize])
+  }, [page, pageSizeTransactions])
 
   useEffect(() => {
     loadUncategorized()
-  }, [uncategorizedPage, pageSize])
+  }, [uncategorizedPage, pageSizeUncategorized])
 
   useEffect(() => {
     loadCategorized()
-  }, [categorizedPage, pageSize])
+  }, [categorizedPage, pageSizeCategorized])
 
   useEffect(() => {
     loadAiSuggestions(uncategorized.map((tx) => tx.id))
   }, [uncategorized])
 
   useEffect(() => {
-    const updatePageSize = () => {
+    const clamp = (value: number, min: number, max: number) =>
+      Math.max(min, Math.min(max, value))
+    const updatePageSizes = () => {
       const estimatedRowHeight = 44
-      const reservedSpace = 360
-      const available = Math.max(200, window.innerHeight - reservedSpace)
-      const nextSize = Math.max(10, Math.floor(available / estimatedRowHeight))
-      setPageSize(nextSize)
+      const calc = (reserved: number, min = 8, max = 30) => {
+        const available = Math.max(200, window.innerHeight - reserved)
+        return clamp(Math.floor(available / estimatedRowHeight), min, max)
+      }
+
+      setPageSizeTransactions(calc(320, 10, 30))
+      setPageSizeUncategorized(calc(420, 8, 24))
+      setPageSizeCategorized(calc(380, 8, 24))
       setPage(0)
       setUncategorizedPage(0)
       setCategorizedPage(0)
     }
 
-    updatePageSize()
-    window.addEventListener('resize', updatePageSize)
-    return () => window.removeEventListener('resize', updatePageSize)
+    updatePageSizes()
+    window.addEventListener('resize', updatePageSizes)
+    return () => window.removeEventListener('resize', updatePageSizes)
   }, [])
 
   const pickFile = async () => {
@@ -752,29 +978,48 @@ function App() {
     setCategoryStatus('Category created.')
     setNewCategoryName('')
     setNewCategoryColor('#4c7cff')
+    setNewCategoryModalOpen(false)
     loadCategories()
   }
 
-  const updateCategory = async (
-    category: CategoryRow,
-    changes: Partial<CategoryRow>
-  ) => {
+  const saveCategory = async (id: number) => {
+    const draft = categoryEdits[id]
+    if (!draft) {
+      return
+    }
     await window.api.categories.update({
-      id: category.id,
-      name: changes.name ?? category.name,
-      color: changes.color ?? category.color,
-      isActive: changes.isActive ?? category.isActive,
+      id,
+      name: draft.name,
+      color: draft.color,
+      isActive: draft.isActive,
     })
+    setCategoryStatus('Category saved.')
+    loadCategories()
+  }
+
+  const deleteCategoryRow = async (id: number) => {
+    const result = await window.api.categories.delete({ id })
+    if (result.deleted) {
+      setCategoryStatus('Category deleted.')
+    } else if (result.archived) {
+      setCategoryStatus('Category in use. Archived instead.')
+    } else {
+      setCategoryStatus('Category could not be deleted.')
+    }
     loadCategories()
   }
 
   const assignCategory = async (transactionId: number) => {
-    const categoryId = selection[transactionId]
-    if (!categoryId) {
+    const categoryIds = selection[transactionId] ?? []
+    if (categoryIds.length === 0) {
       return
     }
 
-    await window.api.transactions.addCategory({ transactionId, categoryId })
+    await Promise.all(
+      categoryIds.map((categoryId) =>
+        window.api.transactions.addCategory({ transactionId, categoryId })
+      )
+    )
     setSelection((current) => {
       const next = { ...current }
       delete next[transactionId]
@@ -791,7 +1036,7 @@ function App() {
   }
 
   const openRuleDraft = (tx: TransactionRow) => {
-    const defaultCategory = selection[tx.id]
+    const defaultCategory = (selection[tx.id] ?? [])[0]
     if (!defaultCategory) {
       return
     }
@@ -799,11 +1044,34 @@ function App() {
     setRuleDraft({
       txId: tx.id,
       matcherType: 'payee',
-      matcherValue: tx.payee ?? '',
+      matcherValue: tx.payee ?? tx.purpose ?? '',
       categoryId: defaultCategory,
       priority: 100,
       isActive: 1,
     })
+    setRuleMenuOpen((current) => ({ ...current, [tx.id]: false }))
+  }
+
+  const createRuleFromPayee = async (tx: TransactionRow) => {
+    const defaultCategory = (selection[tx.id] ?? [])[0]
+    if (!defaultCategory) {
+      return
+    }
+    const matcherValue = tx.payee ?? tx.purpose ?? ''
+    if (!matcherValue.trim()) {
+      setRulesStatusModal('No payee available for this transaction.')
+      return
+    }
+
+    await window.api.rules.create({
+      matcherType: 'payee',
+      matcherValue: matcherValue.trim(),
+      categoryId: defaultCategory,
+      priority: 100,
+      isActive: 1,
+    })
+    setRuleMenuOpen((current) => ({ ...current, [tx.id]: false }))
+    setRulesStatusModal('Rule created from payee.')
   }
 
   const saveRuleDraft = async () => {
@@ -961,7 +1229,6 @@ function App() {
         </nav>
       </aside>
       <div className="app">
-        <h1>Horus</h1>
         {activeView === 'dashboard' && (
           <div className="card dashboard">
             <div className="card-header">
@@ -983,9 +1250,6 @@ function App() {
                     ))}
                   </select>
                 </label>
-                <button onClick={() => setActiveView('categorization')}>
-                  Go to Categorization
-                </button>
                 <button onClick={() => loadDashboardData(dashboardMonth)}>
                   Refresh
                 </button>
@@ -1033,19 +1297,26 @@ function App() {
                     <div className="card-header">
                       <h3>Spend by category</h3>
                     </div>
-                    {dashboardCategories.length === 0 ? (
+                    {dashboardSpendCategories.length === 0 ? (
                       <div className="muted">No categorized spend yet.</div>
                     ) : (
                       <div className="chart">
                         <ResponsiveContainer width="100%" height={260}>
-                          <BarChart data={dashboardCategories}>
+                          <BarChart data={dashboardSpendCategories}>
                             <CartesianGrid strokeDasharray="3 3" />
                             <XAxis dataKey="categoryName" />
                             <YAxis />
                             <Tooltip
                               formatter={(value: number) => formatCurrency(value)}
                             />
-                            <Bar dataKey="totalSpend" fill="#2b4cff" />
+                            <Bar dataKey="totalSpend" fill="#2b4cff">
+                              {dashboardSpendCategories.map((entry) => (
+                                <Cell
+                                  key={`bar-${entry.categoryId}`}
+                                  fill={entry.categoryColor ?? '#2b4cff'}
+                                />
+                              ))}
+                            </Bar>
                           </BarChart>
                         </ResponsiveContainer>
                       </div>
@@ -1053,7 +1324,7 @@ function App() {
                   </div>
                   <div className="chart-card">
                     <div className="card-header">
-                      <h3>Spend trend (last 6 months)</h3>
+                      <h3>Spend & income trend (last 6 months)</h3>
                     </div>
                     {dashboardTrend.length === 0 ? (
                       <div className="muted">No trend data yet.</div>
@@ -1073,6 +1344,12 @@ function App() {
                               stroke="#f2c14e"
                               strokeWidth={2}
                             />
+                            <Line
+                              type="monotone"
+                              dataKey="totalIncome"
+                              stroke="#2b4cff"
+                              strokeWidth={2}
+                            />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
@@ -1083,7 +1360,7 @@ function App() {
                   <div className="card-header">
                     <h3>Transactions per category</h3>
                   </div>
-                  {dashboardCategories.length === 0 ? (
+                  {dashboardSpendCategories.length === 0 ? (
                     <div className="muted">No categorized transactions yet.</div>
                   ) : (
                     <div className="data-table">
@@ -1096,9 +1373,18 @@ function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {dashboardCategories.map((row) => (
+                          {dashboardSpendCategories.map((row) => (
                             <tr key={row.categoryId}>
-                              <td>{row.categoryName}</td>
+                              <td>
+                                <span
+                                  className="category-swatch"
+                                  style={{
+                                    backgroundColor:
+                                      row.categoryColor ?? '#2b4cff',
+                                  }}
+                                />
+                                {row.categoryName}
+                              </td>
                               <td>{row.transactionCount}</td>
                               <td>{formatCurrency(row.totalSpend)}</td>
                             </tr>
@@ -1154,7 +1440,7 @@ function App() {
                   <span className="page-indicator">Page {page + 1}</span>
                   <button
                     onClick={() => setPage((p) => p + 1)}
-                    disabled={transactions.length < pageSize}
+                    disabled={transactions.length < pageSizeTransactions}
                   >
                     Next
                   </button>
@@ -1163,11 +1449,12 @@ function App() {
                   </button>
                 </div>
               </div>
-              <DataTable
-                data={transactions}
-                columns={transactionColumns}
-                emptyMessage="No transactions yet."
-              />
+            <DataTable
+              data={transactions}
+              columns={transactionColumns}
+              getRowId={(row) => String(row.id)}
+              emptyMessage="No transactions yet."
+            />
             </div>
           </>
         )}
@@ -1210,12 +1497,12 @@ function App() {
                       Prev
                     </button>
                     <span className="page-indicator">Page {uncategorizedPage + 1}</span>
-                    <button
-                      onClick={() => setUncategorizedPage((p) => p + 1)}
-                      disabled={uncategorized.length < pageSize}
-                    >
-                      Next
-                    </button>
+                  <button
+                    onClick={() => setUncategorizedPage((p) => p + 1)}
+                    disabled={uncategorized.length < pageSizeUncategorized}
+                  >
+                    Next
+                  </button>
                     <button onClick={loadUncategorized}>Refresh</button>
                   </div>
                 </div>
@@ -1224,6 +1511,7 @@ function App() {
                 <DataTable
                   data={uncategorized}
                   columns={uncategorizedColumns}
+                  getRowId={(row) => String(row.id)}
                   emptyMessage="All transactions are categorized."
                 />
               </>
@@ -1233,6 +1521,68 @@ function App() {
                 <div className="card-header subheader">
                   <h3>Categorized</h3>
                   <div className="actions">
+                    <Select
+                      className="multi-select category-filter"
+                      classNamePrefix="rs"
+                      isMulti
+                      isSearchable
+                      options={categoryFilterOptions}
+                      value={categoryFilterOptions.filter((option) =>
+                        categorizedFilter.includes(option.value)
+                      )}
+                      onChange={(values) =>
+                        setCategorizedFilter(values.map((option) => option.value))
+                      }
+                      placeholder="Filter categories..."
+                      menuPortalTarget={document.body}
+                      menuPosition="fixed"
+                      styles={{
+                        control: (base, state) => ({
+                          ...base,
+                          backgroundColor: '#101010',
+                          borderColor: state.isFocused ? '#2b4cff' : '#2a2a2a',
+                          boxShadow: state.isFocused
+                            ? '0 0 0 1px #2b4cff'
+                            : 'none',
+                          minHeight: 34,
+                        }),
+                        menu: (base) => ({
+                          ...base,
+                          backgroundColor: '#141414',
+                          border: '1px solid #2a2a2a',
+                          color: '#f0f0f0',
+                        }),
+                        menuPortal: (base) => ({
+                          ...base,
+                          zIndex: 9999,
+                        }),
+                        option: (base, state) => ({
+                          ...base,
+                          backgroundColor: state.isSelected
+                            ? '#2b4cff'
+                            : state.isFocused
+                            ? '#1f2338'
+                            : '#141414',
+                          color: '#f0f0f0',
+                        }),
+                        singleValue: (base) => ({ ...base, color: '#f0f0f0' }),
+                        placeholder: (base) => ({ ...base, color: '#bdbdbd' }),
+                        input: (base) => ({ ...base, color: '#f0f0f0' }),
+                        multiValue: (base) => ({
+                          ...base,
+                          backgroundColor: '#1b1f33',
+                          border: '1px solid #2b4cff',
+                        }),
+                        multiValueLabel: (base) => ({
+                          ...base,
+                          color: '#e6e9ff',
+                        }),
+                        multiValueRemove: (base) => ({
+                          ...base,
+                          color: '#cbd3ff',
+                        }),
+                      }}
+                    />
                     <button
                       onClick={() => setCategorizedPage(0)}
                       disabled={categorizedPage === 0}
@@ -1246,18 +1596,19 @@ function App() {
                       Prev
                     </button>
                     <span className="page-indicator">Page {categorizedPage + 1}</span>
-                    <button
-                      onClick={() => setCategorizedPage((p) => p + 1)}
-                      disabled={categorized.length < pageSize}
-                    >
-                      Next
-                    </button>
+                  <button
+                    onClick={() => setCategorizedPage((p) => p + 1)}
+                    disabled={categorized.length < pageSizeCategorized}
+                  >
+                    Next
+                  </button>
                     <button onClick={loadCategorized}>Refresh</button>
                   </div>
                 </div>
                 <DataTable
-                  data={categorized}
+                  data={filteredCategorized}
                   columns={categorizedColumns}
+                  getRowId={(row) => String(row.id)}
                   emptyMessage="No categorized transactions yet."
                 />
               </>
@@ -1268,26 +1619,24 @@ function App() {
           <div className="card">
             <div className="card-header">
               <h2>Categories</h2>
-              <button onClick={loadCategories}>Refresh</button>
-            </div>
-            <div className="category-form">
-              <input
-                type="text"
-                placeholder="Category name"
-                value={newCategoryName}
-                onChange={(event) => setNewCategoryName(event.target.value)}
-              />
-              <input
-                type="color"
-                value={newCategoryColor}
-                onChange={(event) => setNewCategoryColor(event.target.value)}
-              />
-              <button onClick={createCategory}>Add</button>
+              <div className="actions">
+                <button onClick={() => setNewCategoryModalOpen(true)}>
+                  Add Category
+                </button>
+                <button onClick={loadCategories}>Refresh</button>
+              </div>
             </div>
             {categoryStatus && <div className="status">{categoryStatus}</div>}
             <DataTable
               data={categories}
               columns={categoryColumns}
+              getRowId={(row) => String(row.id)}
+              meta={{
+                categoryEdits,
+                setCategoryEdits,
+                saveCategory,
+                deleteCategoryRow,
+              }}
               emptyMessage="No categories yet."
             />
           </div>
@@ -1304,6 +1653,7 @@ function App() {
             <DataTable
               data={rules}
               columns={rulesColumns}
+              getRowId={(row) => String(row.id)}
               emptyMessage="No rules yet."
             />
           </div>
@@ -1343,7 +1693,7 @@ function App() {
                     }
                   />
                 </label>
-                <label>
+                <label className="ai-checkbox">
                   Enabled
                   <input
                     type="checkbox"
@@ -1686,6 +2036,43 @@ function App() {
             <div className="modal-actions">
               <button onClick={() => setNewRuleModalOpen(false)}>Cancel</button>
               <button onClick={createRule}>Create Rule</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {newCategoryModalOpen && (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div className="modal-header">
+              <h3>Add Category</h3>
+              <button onClick={() => setNewCategoryModalOpen(false)}>
+                Close
+              </button>
+            </div>
+            <div className="modal-body">
+              <label>
+                Name
+                <input
+                  type="text"
+                  placeholder="Category name"
+                  value={newCategoryName}
+                  onChange={(event) => setNewCategoryName(event.target.value)}
+                />
+              </label>
+              <label>
+                Color
+                <input
+                  type="color"
+                  value={newCategoryColor}
+                  onChange={(event) => setNewCategoryColor(event.target.value)}
+                />
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setNewCategoryModalOpen(false)}>
+                Cancel
+              </button>
+              <button onClick={createCategory}>Create</button>
             </div>
           </div>
         </div>

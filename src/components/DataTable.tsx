@@ -10,6 +10,8 @@ type DataTableProps<T> = {
   columns: Array<ColumnDef<T>>
   className?: string
   emptyMessage?: string
+  getRowId?: (row: T, index: number) => string
+  meta?: Record<string, unknown>
 }
 
 export function DataTable<T>({
@@ -17,21 +19,26 @@ export function DataTable<T>({
   columns,
   className,
   emptyMessage = 'No data.',
+  getRowId,
+  meta,
 }: DataTableProps<T>) {
   const table = useReactTable({
     data,
     columns,
     getCoreRowModel: getCoreRowModel(),
+    getRowId,
+    meta,
   })
 
   return (
     <div className={`data-table ${className ?? ''}`.trim()}>
-      <table>
-        <thead>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <th key={header.id}>
+      <div className="data-table-scroll">
+        <table>
+          <thead>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <tr key={headerGroup.id}>
+                {headerGroup.headers.map((header) => (
+                  <th key={header.id}>
                   {header.isPlaceholder
                     ? null
                     : flexRender(header.column.columnDef.header, header.getContext())}
@@ -59,7 +66,8 @@ export function DataTable<T>({
             ))
           )}
         </tbody>
-      </table>
+        </table>
+      </div>
     </div>
   )
 }

@@ -40,6 +40,9 @@
   border: 1px solid transparent;
   padding: 0.6rem 0.75rem;
   border-radius: 10px;
+  display: flex;
+  align-items: center;
+  min-height: 40px;
 }
 
 .nav button.active {
@@ -96,6 +99,11 @@ button {
   overflow: hidden;
 }
 
+.data-table-scroll {
+  max-height: 60vh;
+  overflow: auto;
+}
+
 .data-table table {
   width: 100%;
   border-collapse: collapse;
@@ -120,6 +128,15 @@ button {
 
 .data-table td.empty {
   color: #c8c8c8;
+}
+
+.category-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  margin-right: 0.5rem;
+  vertical-align: middle;
 }
 
 .data-table input,
@@ -153,6 +170,21 @@ button {
   text-align: right;
 }
 
+.data-table td .toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+.data-table td .toggle input {
+  margin: 0;
+}
+
+.data-table td .toggle span {
+  white-space: nowrap;
+}
+
 .actions {
   display: flex;
   align-items: center;
@@ -183,6 +215,10 @@ button {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.chips.compact {
+  gap: 0.35rem;
 }
 
 .chip {
@@ -298,6 +334,16 @@ button {
   display: grid;
   gap: 0.4rem;
   font-size: 0.9rem;
+}
+
+.ai-form .ai-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.ai-form .ai-checkbox input {
+  margin: 0;
 }
 
 .ai-form input[type='text'],
@@ -442,6 +488,16 @@ button {
   font-size: 0.9rem;
 }
 
+.modal-body .toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.modal-body .toggle input {
+  margin: 0;
+}
+
 .modal-body input,
 .modal-body select {
   padding: 0.5rem;
@@ -455,6 +511,119 @@ button {
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
+}
+
+.multi-select .rs__control {
+  min-height: 34px;
+  border-radius: 8px;
+  border-color: #2a2a2a;
+  background: #101010;
+}
+
+.multi-select .rs__control--is-focused {
+  border-color: #2b4cff;
+  box-shadow: 0 0 0 1px #2b4cff;
+}
+
+.multi-select .rs__value-container {
+  padding: 2px 6px;
+}
+
+.multi-select .rs__multi-value {
+  background: #1b1f33;
+  border: 1px solid #2b4cff;
+}
+
+.multi-select .rs__multi-value__label {
+  color: #e6e9ff;
+}
+
+.multi-select .rs__multi-value__remove {
+  color: #cbd3ff;
+}
+
+.multi-select .rs__menu {
+  background: #141414;
+  border: 1px solid #2a2a2a;
+  z-index: 9999;
+}
+
+.multi-select .rs__option {
+  background: #141414;
+}
+
+.multi-select .rs__option--is-focused {
+  background: #1f2338;
+}
+
+.multi-select .rs__option--is-selected {
+  background: #2b4cff;
+}
+
+.multi-select .rs__single-value,
+.multi-select .rs__placeholder,
+.multi-select .rs__input-container,
+.multi-select .rs__option {
+  color: #f0f0f0;
+}
+
+.multi-select .rs__menu {
+  color: #f0f0f0;
+}
+
+.multi-select-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.category-filter {
+  min-width: 220px;
+}
+
+.dropdown {
+  position: relative;
+  display: inline-flex;
+}
+
+.dropdown-split {
+  display: inline-flex;
+}
+
+.dropdown-split button {
+  margin-right: 0;
+}
+
+.dropdown-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.dropdown-toggle {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  padding: 0 0.5rem;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: #141414;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  z-index: 20;
+  min-width: 140px;
+}
+
+.dropdown-menu button {
+  margin: 0;
+  width: 100%;
+  text-align: left;
 }
 
 .rule-panel {

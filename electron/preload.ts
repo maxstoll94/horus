@@ -53,6 +53,8 @@ contextBridge.exposeInMainWorld('api', {
       color?: string | null
       isActive?: number
     }) => ipcRenderer.invoke('categories:update', payload),
+    delete: (payload: { id: number }) =>
+      ipcRenderer.invoke('categories:delete', payload),
   },
   rules: {
     list: () => ipcRenderer.invoke('rules:list'),
