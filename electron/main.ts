@@ -3,7 +3,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { readFile } from 'node:fs/promises'
-import { closeDatabase, getDatabaseInfo, initializeDatabase, insertImport, insertTransactions, listTransactions } from './db'
+import { closeDatabase, createCategory, getDatabaseInfo, initializeDatabase, insertImport, insertTransactions, listCategories, listTransactions, updateCategory } from './db'
 import { parseDkbCsv } from './importers/dkb'
 
 const require = createRequire(import.meta.url)
@@ -35,7 +35,11 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
     },
+    show: false,
   })
+
+  win.maximize()
+  win.show()
 
   // Test active push message to Renderer-process.
   win.webContents.on('did-finish-load', () => {
@@ -75,6 +79,24 @@ app.on('activate', () => {
 app.whenReady().then(() => {
   initializeDatabase()
   ipcMain.handle('db:get-info', () => getDatabaseInfo())
+  ipcMain.handle('categories:list', () => listCategories())
+  ipcMain.handle('categories:create', (_event, payload) => {
+    const name = typeof payload?.name === 'string' ? payload.name.trim() : ''
+    if (!name) {
+      return null
+    }
+    return createCategory(name, payload?.color)
+  })
+  ipcMain.handle('categories:update', (_event, payload) => {
+    if (!payload?.id) {
+      return false
+    }
+    return updateCategory(payload.id, {
+      name: payload?.name,
+      color: payload?.color,
+      isActive: payload?.isActive,
+    })
+  })
   ipcMain.handle('transactions:list', (_event, filters) =>
     listTransactions(filters)
   )
