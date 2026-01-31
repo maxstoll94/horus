@@ -17,6 +17,7 @@ coverage
 *.db
 *.db-shm
 *.db-wal
+.env
 
 # Editor directories and files
 .vscode/*
