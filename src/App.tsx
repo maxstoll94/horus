@@ -60,6 +60,7 @@ function App() {
   const [pageSize, setPageSize] = useState(20)
   const [selection, setSelection] = useState<Record<number, number>>({})
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null)
+  const [rulesStatus, setRulesStatus] = useState<string>('')
 
   const loadTransactions = async () => {
     setLoadingTransactions(true)
@@ -267,6 +268,16 @@ function App() {
     setRuleDraft(null)
   }
 
+  const applyRules = async () => {
+    setRulesStatus('Applying rules...')
+    const result = await window.api.rules.apply()
+    setRulesStatus(
+      `Applied ${result.applied} matches across ${result.transactionsMatched} transactions.`
+    )
+    loadUncategorized()
+    loadCategorized()
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -391,6 +402,7 @@ function App() {
                 <div className="card-header subheader">
                   <h3>Uncategorized</h3>
                   <div className="actions">
+                    <button onClick={applyRules}>Apply Rules</button>
                     <button
                       onClick={() => setUncategorizedPage(0)}
                       disabled={uncategorizedPage === 0}
@@ -413,6 +425,7 @@ function App() {
                     <button onClick={loadUncategorized}>Refresh</button>
                   </div>
                 </div>
+                {rulesStatus && <div className="status">{rulesStatus}</div>}
                 <div className="table">
                   <div className="table-row table-head categorize-row">
                     <div>Date</div>

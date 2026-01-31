@@ -54,4 +54,24 @@ contextBridge.exposeInMainWorld('api', {
       isActive?: number
     }) => ipcRenderer.invoke('categories:update', payload),
   },
+  rules: {
+    list: () => ipcRenderer.invoke('rules:list'),
+    create: (payload: {
+      matcherType: string
+      matcherValue: string
+      categoryId: number
+      priority?: number
+      isActive?: number
+    }) => ipcRenderer.invoke('rules:create', payload),
+    update: (payload: {
+      id: number
+      matcherType?: string
+      matcherValue?: string
+      categoryId?: number
+      priority?: number
+      isActive?: number
+    }) => ipcRenderer.invoke('rules:update', payload),
+    delete: (payload: { id: number }) => ipcRenderer.invoke('rules:delete', payload),
+    apply: () => ipcRenderer.invoke('rules:apply'),
+  },
 })

@@ -6,16 +6,21 @@ import { readFile } from 'node:fs/promises'
 import {
   addTransactionCategory,
   closeDatabase,
+  createRule,
   createCategory,
+  deleteRule,
   getDatabaseInfo,
   initializeDatabase,
+  applyRulesToUncategorized,
   insertImport,
   insertTransactions,
   listCategories,
   listCategorizedTransactions,
+  listRules,
   listTransactions,
   listUncategorizedTransactions,
   removeTransactionCategory,
+  updateRule,
   updateCategory,
 } from './db'
 import { parseDkbCsv } from './importers/dkb'
@@ -111,6 +116,38 @@ app.whenReady().then(() => {
       isActive: payload?.isActive,
     })
   })
+  ipcMain.handle('rules:list', () => listRules())
+  ipcMain.handle('rules:create', (_event, payload) => {
+    if (!payload?.matcherType || !payload?.matcherValue || !payload?.categoryId) {
+      return null
+    }
+    return createRule({
+      matcherType: payload.matcherType,
+      matcherValue: payload.matcherValue,
+      categoryId: payload.categoryId,
+      priority: payload?.priority,
+      isActive: payload?.isActive,
+    })
+  })
+  ipcMain.handle('rules:update', (_event, payload) => {
+    if (!payload?.id) {
+      return false
+    }
+    return updateRule(payload.id, {
+      matcherType: payload?.matcherType,
+      matcherValue: payload?.matcherValue,
+      categoryId: payload?.categoryId,
+      priority: payload?.priority,
+      isActive: payload?.isActive,
+    })
+  })
+  ipcMain.handle('rules:delete', (_event, payload) => {
+    if (!payload?.id) {
+      return false
+    }
+    return deleteRule(payload.id)
+  })
+  ipcMain.handle('rules:apply', () => applyRulesToUncategorized())
   ipcMain.handle('transactions:list', (_event, filters) =>
     listTransactions(filters)
   )

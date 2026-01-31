@@ -534,6 +534,265 @@ export function listCategories() {
   return rows
 }
 
+export type RuleRow = {
+  id: number
+  matcherType: string
+  matcherValue: string
+  categoryId: number
+  priority: number
+  isActive: number
+}
+
+export function listRules() {
+  const db = initializeDatabase()
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          id,
+          matcher_type as matcherType,
+          matcher_value as matcherValue,
+          category_id as categoryId,
+          priority,
+          is_active as isActive
+        FROM rules
+        ORDER BY priority DESC, id DESC
+      `
+    )
+    .all() as RuleRow[]
+
+  return rows
+}
+
+export function createRule(input: {
+  matcherType: string
+  matcherValue: string
+  categoryId: number
+  priority?: number
+  isActive?: number
+}) {
+  const db = initializeDatabase()
+  const stmt = db.prepare(
+    `
+      INSERT INTO rules (
+        matcher_type,
+        matcher_value,
+        category_id,
+        priority,
+        is_active
+      ) VALUES (?, ?, ?, ?, ?)
+    `
+  )
+  const result = stmt.run(
+    input.matcherType,
+    input.matcherValue,
+    input.categoryId,
+    input.priority ?? 100,
+    input.isActive ?? 1
+  ) as RunResult
+
+  return result.lastInsertRowid as number
+}
+
+export function updateRule(
+  id: number,
+  updates: Partial<{
+    matcherType: string
+    matcherValue: string
+    categoryId: number
+    priority: number
+    isActive: number
+  }>
+) {
+  const db = initializeDatabase()
+  const current = db
+    .prepare(
+      `
+        SELECT
+          matcher_type as matcherType,
+          matcher_value as matcherValue,
+          category_id as categoryId,
+          priority,
+          is_active as isActive
+        FROM rules
+        WHERE id = ?
+      `
+    )
+    .get(id) as RuleRow | undefined
+
+  if (!current) {
+    return false
+  }
+
+  const next = {
+    matcherType: updates.matcherType ?? current.matcherType,
+    matcherValue: updates.matcherValue ?? current.matcherValue,
+    categoryId: updates.categoryId ?? current.categoryId,
+    priority: updates.priority ?? current.priority,
+    isActive: updates.isActive ?? current.isActive,
+  }
+
+  db.prepare(
+    `
+      UPDATE rules
+      SET matcher_type = ?,
+          matcher_value = ?,
+          category_id = ?,
+          priority = ?,
+          is_active = ?,
+          updated_at = datetime('now')
+      WHERE id = ?
+    `
+  ).run(
+    next.matcherType,
+    next.matcherValue,
+    next.categoryId,
+    next.priority,
+    next.isActive,
+    id
+  )
+
+  return true
+}
+
+export function deleteRule(id: number) {
+  const db = initializeDatabase()
+  const result = db.prepare(`DELETE FROM rules WHERE id = ?`).run(id) as RunResult
+  return result.changes > 0
+}
+
+type RuleMatchTransaction = {
+  id: number
+  amount: number
+  payee: string | null
+  purpose: string | null
+  iban: string | null
+  bic: string | null
+}
+
+function matchesRule(rule: RuleRow, tx: RuleMatchTransaction) {
+  const value = rule.matcherValue.trim()
+  if (!value) {
+    return false
+  }
+
+  switch (rule.matcherType) {
+    case 'payee': {
+      return (tx.payee ?? '').toLowerCase().includes(value.toLowerCase())
+    }
+    case 'purpose': {
+      return (tx.purpose ?? '').toLowerCase().includes(value.toLowerCase())
+    }
+    case 'iban': {
+      return (tx.iban ?? '').toLowerCase().includes(value.toLowerCase())
+    }
+    case 'bic': {
+      return (tx.bic ?? '').toLowerCase().includes(value.toLowerCase())
+    }
+    case 'amount': {
+      const target = Number.parseFloat(value.replace(',', '.'))
+      if (Number.isNaN(target)) {
+        return false
+      }
+      return Math.abs(tx.amount - target) < 0.0001
+    }
+    case 'direction': {
+      const normalized = value.toLowerCase()
+      const isIncome = tx.amount > 0
+      if (['in', 'income', 'credit', '+', 'plus'].includes(normalized)) {
+        return isIncome
+      }
+      if (['out', 'expense', 'debit', '-', 'minus'].includes(normalized)) {
+        return !isIncome
+      }
+      return false
+    }
+    default:
+      return false
+  }
+}
+
+export function applyRulesToUncategorized() {
+  const db = initializeDatabase()
+  const rules = db
+    .prepare(
+      `
+        SELECT
+          id,
+          matcher_type as matcherType,
+          matcher_value as matcherValue,
+          category_id as categoryId,
+          priority,
+          is_active as isActive
+        FROM rules
+        WHERE is_active = 1
+        ORDER BY priority DESC, id DESC
+      `
+    )
+    .all() as RuleRow[]
+
+  if (rules.length === 0) {
+    return { applied: 0, transactionsMatched: 0 }
+  }
+
+  const transactions = db
+    .prepare(
+      `
+        SELECT
+          t.id,
+          t.amount,
+          t.payee,
+          t.purpose,
+          t.iban,
+          t.bic
+        FROM transactions t
+        LEFT JOIN transaction_categories tc
+          ON tc.transaction_id = t.id
+        WHERE tc.transaction_id IS NULL
+      `
+    )
+    .all() as RuleMatchTransaction[]
+
+  if (transactions.length === 0) {
+    return { applied: 0, transactionsMatched: 0 }
+  }
+
+  const insertStmt = db.prepare(
+    `INSERT INTO transaction_categories (transaction_id, category_id) VALUES (?, ?)`
+  )
+
+  let applied = 0
+  let transactionsMatched = 0
+
+  const run = db.transaction(() => {
+    for (const tx of transactions) {
+      let matched = false
+      for (const rule of rules) {
+        if (!matchesRule(rule, tx)) {
+          continue
+        }
+        matched = true
+        try {
+          insertStmt.run(tx.id, rule.categoryId)
+          applied += 1
+        } catch (error) {
+          const message = error instanceof Error ? error.message : ''
+          if (!message.includes('UNIQUE constraint failed')) {
+            throw error
+          }
+        }
+      }
+      if (matched) {
+        transactionsMatched += 1
+      }
+    }
+  })
+
+  run()
+
+  return { applied, transactionsMatched }
+}
+
 export function createCategory(name: string, color?: string | null) {
   const db = initializeDatabase()
   const stmt = db.prepare(

@@ -63,5 +63,32 @@ interface Window {
         isActive?: number
       }) => Promise<boolean>
     }
+    rules: {
+      list: () => Promise<Array<{
+        id: number
+        matcherType: string
+        matcherValue: string
+        categoryId: number
+        priority: number
+        isActive: number
+      }>>
+      create: (payload: {
+        matcherType: string
+        matcherValue: string
+        categoryId: number
+        priority?: number
+        isActive?: number
+      }) => Promise<number | null>
+      update: (payload: {
+        id: number
+        matcherType?: string
+        matcherValue?: string
+        categoryId?: number
+        priority?: number
+        isActive?: number
+      }) => Promise<boolean>
+      delete: (payload: { id: number }) => Promise<boolean>
+      apply: () => Promise<{ applied: number; transactionsMatched: number }>
+    }
   }
 }
