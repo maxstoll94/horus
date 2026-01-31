@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +14,8 @@ import {
   initializeDatabase,
   applyRulesToUncategorized,
   getAiSettings,
+  listAiRequests,
+  getAiSuggestionsForTransactions,
   insertImport,
   insertTransactions,
   listCategories,
@@ -26,6 +29,7 @@ import {
   updateCategory,
 } from './db'
 import { parseDkbCsv } from './importers/dkb'
+import { suggestCategories } from './ai'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -156,11 +160,36 @@ app.whenReady().then(() => {
       model: payload?.model,
       enabled: payload?.enabled,
       confidenceThreshold: payload?.confidenceThreshold,
+      inputCostPer1M: payload?.inputCostPer1M,
+      outputCostPer1M: payload?.outputCostPer1M,
     })
   )
   ipcMain.handle('ai:key:status', () => ({
     present: Boolean(process.env.OPENAI_API_KEY),
   }))
+  ipcMain.handle('ai:requests:list', (_event, payload) =>
+    listAiRequests(payload?.limit ?? 100)
+  )
+  ipcMain.handle('ai:suggestions', (_event, payload) => {
+    const ids = Array.isArray(payload?.transactionIds)
+      ? payload.transactionIds
+      : []
+    return getAiSuggestionsForTransactions(ids)
+  })
+  ipcMain.handle('ai:suggest', async (_event, payload) => {
+    const transactions = Array.isArray(payload?.transactions)
+      ? payload.transactions
+      : []
+    const categories = Array.isArray(payload?.categories)
+      ? payload.categories
+      : []
+
+    if (transactions.length === 0 || categories.length === 0) {
+      return { applied: 0, error: 'No transactions or categories provided.' }
+    }
+
+    return suggestCategories(transactions, categories)
+  })
   ipcMain.handle('transactions:list', (_event, filters) =>
     listTransactions(filters)
   )

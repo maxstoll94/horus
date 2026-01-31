@@ -80,7 +80,24 @@ contextBridge.exposeInMainWorld('api', {
       model?: string
       enabled?: number
       confidenceThreshold?: number
+      inputCostPer1M?: number | null
+      outputCostPer1M?: number | null
     }) => ipcRenderer.invoke('ai:settings:update', payload),
     keyStatus: () => ipcRenderer.invoke('ai:key:status'),
+    suggest: (payload: {
+      transactions: Array<{
+        id: number
+        bookingDate: string
+        amount: number
+        currency: string
+        payee: string | null
+        purpose: string | null
+      }>
+      categories: Array<{ id: number; name: string }>
+    }) => ipcRenderer.invoke('ai:suggest', payload),
+    suggestions: (payload: { transactionIds: number[] }) =>
+      ipcRenderer.invoke('ai:suggestions', payload),
+    listRequests: (payload?: { limit?: number }) =>
+      ipcRenderer.invoke('ai:requests:list', payload ?? {}),
   },
 })

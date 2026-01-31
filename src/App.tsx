@@ -65,12 +65,36 @@ function App() {
   const [rulesStatus, setRulesStatus] = useState<string>('')
   const [rulesStatusModal, setRulesStatusModal] = useState<string | null>(null)
   const [newRuleModalOpen, setNewRuleModalOpen] = useState(false)
+  const [aiSuggestions, setAiSuggestions] = useState<
+    Record<
+      number,
+      { categoryId: number; confidence: number; reason: string | null }
+    >
+  >({})
+  const [aiStatus, setAiStatus] = useState<string>('')
   const [aiSettings, setAiSettings] = useState<{
     model: string
     enabled: number
     confidenceThreshold: number
+    inputCostPer1M: number | null
+    outputCostPer1M: number | null
   } | null>(null)
   const [aiKeyPresent, setAiKeyPresent] = useState<boolean | null>(null)
+  const [aiRequests, setAiRequests] = useState<
+    Array<{
+      id: number
+      model: string | null
+      requestPayload: string | null
+      responsePayload: string | null
+      status: string
+      error: string | null
+      inputTokens: number | null
+      outputTokens: number | null
+      totalTokens: number | null
+      costUsd: number | null
+      createdAt: string
+    }>
+  >([])
   const [rules, setRules] = useState<
     Array<{
       id: number
@@ -204,8 +228,34 @@ function App() {
           </button>
         ),
       },
+      {
+        id: 'ai',
+        header: 'AI Suggestion',
+        cell: ({ row }) => {
+          const suggestion = aiSuggestions[row.original.id]
+          if (!suggestion) {
+            return <span className="muted">-</span>
+          }
+          const category = activeCategories.find(
+            (cat) => cat.id === suggestion.categoryId
+          )
+          return (
+            <div className="ai-suggestion">
+              <div>
+                {category?.name ?? 'Unknown'} ({suggestion.confidence.toFixed(2)})
+              </div>
+              {suggestion.reason && (
+                <div className="muted">{suggestion.reason}</div>
+              )}
+              <button onClick={() => applyAiSuggestion(row.original.id)}>
+                Apply
+              </button>
+            </div>
+          )
+        },
+      },
     ],
-    [activeCategories, selection]
+    [activeCategories, selection, aiSuggestions]
   )
 
   const categorizedColumns = useMemo<ColumnDef<CategorizedViewRow>[]>(
@@ -500,6 +550,29 @@ function App() {
     setRuleEdits({})
   }
 
+  const loadAiSuggestions = async (ids: number[]) => {
+    if (ids.length === 0) {
+      setAiSuggestions({})
+      return
+    }
+
+    const suggestions = await window.api.ai.suggestions({
+      transactionIds: ids,
+    })
+    const map: Record<
+      number,
+      { categoryId: number; confidence: number; reason: string | null }
+    > = {}
+    for (const item of suggestions) {
+      map[item.transactionId] = {
+        categoryId: item.categoryId,
+        confidence: item.confidence,
+        reason: item.reason ?? null,
+      }
+    }
+    setAiSuggestions(map)
+  }
+
   const loadAiSettings = async () => {
     const settings = await window.api.ai.getSettings()
     const keyStatus = await window.api.ai.keyStatus()
@@ -507,8 +580,12 @@ function App() {
       model: settings.model,
       enabled: settings.enabled,
       confidenceThreshold: settings.confidenceThreshold,
+      inputCostPer1M: settings.inputCostPer1M,
+      outputCostPer1M: settings.outputCostPer1M,
     })
     setAiKeyPresent(keyStatus.present)
+    const requests = await window.api.ai.listRequests({ limit: 50 })
+    setAiRequests(requests)
   }
 
   useEffect(() => {
@@ -540,6 +617,10 @@ function App() {
   useEffect(() => {
     loadCategorized()
   }, [categorizedPage, pageSize])
+
+  useEffect(() => {
+    loadAiSuggestions(uncategorized.map((tx) => tx.id))
+  }, [uncategorized])
 
   useEffect(() => {
     const updatePageSize = () => {
@@ -680,6 +761,45 @@ function App() {
     setRulesStatus(
       `Applied ${result.applied} matches across ${result.transactionsMatched} transactions.`
     )
+    loadUncategorized()
+    loadCategorized()
+  }
+
+  const suggestWithAi = async () => {
+    setAiStatus('Requesting AI suggestions...')
+    const result = await window.api.ai.suggest({
+      transactions: uncategorized.map((tx) => ({
+        id: tx.id,
+        bookingDate: tx.bookingDate,
+        amount: tx.amount,
+        currency: tx.currency,
+        payee: tx.payee,
+        purpose: tx.purpose,
+      })),
+      categories: activeCategories.map((cat) => ({
+        id: cat.id,
+        name: cat.name,
+      })),
+    })
+
+    if (result.error) {
+      setAiStatus(result.error)
+      return
+    }
+
+    setAiStatus(`AI suggested ${result.applied} transactions.`)
+    loadAiSuggestions(uncategorized.map((tx) => tx.id))
+  }
+
+  const applyAiSuggestion = async (transactionId: number) => {
+    const suggestion = aiSuggestions[transactionId]
+    if (!suggestion) {
+      return
+    }
+    await window.api.transactions.addCategory({
+      transactionId,
+      categoryId: suggestion.categoryId,
+    })
     loadUncategorized()
     loadCategorized()
   }
@@ -845,6 +965,7 @@ function App() {
                   <h3>Uncategorized</h3>
                   <div className="actions">
                     <button onClick={applyRules}>Apply Rules</button>
+                    <button onClick={suggestWithAi}>Suggest with AI</button>
                     <button
                       onClick={() => setUncategorizedPage(0)}
                       disabled={uncategorizedPage === 0}
@@ -868,6 +989,7 @@ function App() {
                   </div>
                 </div>
                 {rulesStatus && <div className="status">{rulesStatus}</div>}
+                {aiStatus && <div className="status">{aiStatus}</div>}
                 <DataTable
                   data={uncategorized}
                   columns={uncategorizedColumns}
@@ -969,6 +1091,12 @@ function App() {
                 ? 'Present'
                 : 'Missing'}
             </div>
+            {aiKeyPresent === false && (
+              <div className="status warning">
+                OPENAI_API_KEY is not set. AI suggestions will not work until
+                you set it in your environment.
+              </div>
+            )}
             {aiSettings && (
               <div className="ai-form">
                 <label>
@@ -1013,17 +1141,57 @@ function App() {
                     }
                   />
                 </label>
+                <label>
+                  Input cost ($ per 1M tokens)
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.000001}
+                    value={aiSettings.inputCostPer1M ?? ''}
+                    onChange={(event) =>
+                      setAiSettings({
+                        ...aiSettings,
+                        inputCostPer1M:
+                          event.target.value === ''
+                            ? null
+                            : Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Output cost ($ per 1M tokens)
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.000001}
+                    value={aiSettings.outputCostPer1M ?? ''}
+                    onChange={(event) =>
+                      setAiSettings({
+                        ...aiSettings,
+                        outputCostPer1M:
+                          event.target.value === ''
+                            ? null
+                            : Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
                 <button
                   onClick={async () => {
                     const updated = await window.api.ai.updateSettings({
                       model: aiSettings.model,
                       enabled: aiSettings.enabled,
                       confidenceThreshold: aiSettings.confidenceThreshold,
+                      inputCostPer1M: aiSettings.inputCostPer1M,
+                      outputCostPer1M: aiSettings.outputCostPer1M,
                     })
                     setAiSettings({
                       model: updated.model,
                       enabled: updated.enabled,
                       confidenceThreshold: updated.confidenceThreshold,
+                      inputCostPer1M: updated.inputCostPer1M,
+                      outputCostPer1M: updated.outputCostPer1M,
                     })
                   }}
                 >
@@ -1031,6 +1199,66 @@ function App() {
                 </button>
               </div>
             )}
+            <div className="ai-requests">
+              <h3>AI Requests</h3>
+              <div className="data-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Status</th>
+                      <th>Model</th>
+                      <th>Tokens</th>
+                      <th>Cost</th>
+                      <th>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {aiRequests.length === 0 ? (
+                      <tr>
+                        <td className="empty" colSpan={6}>
+                          No AI requests yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      aiRequests.map((req) => (
+                        <tr key={req.id}>
+                          <td>{req.createdAt}</td>
+                          <td>{req.status}</td>
+                          <td>{req.model ?? '-'}</td>
+                          <td>
+                            {req.inputTokens != null && req.outputTokens != null
+                              ? `${req.inputTokens}/${req.outputTokens}/${req.totalTokens ?? req.inputTokens + req.outputTokens}`
+                              : '-'}
+                          </td>
+                          <td>
+                            {req.costUsd != null ? `$${req.costUsd.toFixed(6)}` : '-'}
+                          </td>
+                          <td>
+                            <details>
+                              <summary>View</summary>
+                              {req.error && (
+                                <div className="muted">Error: {req.error}</div>
+                              )}
+                              {req.requestPayload && (
+                                <pre className="payload">
+                                  {req.requestPayload}
+                                </pre>
+                              )}
+                              {req.responsePayload && (
+                                <pre className="payload">
+                                  {req.responsePayload}
+                                </pre>
+                              )}
+                            </details>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
       </div>

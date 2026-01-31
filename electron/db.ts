@@ -8,7 +8,7 @@ const Database = require('better-sqlite3') as typeof import('better-sqlite3')
 type DatabaseInstance = import('better-sqlite3').Database
 type RunResult = import('better-sqlite3').RunResult
 
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 7
 let dbInstance: DatabaseInstance | null = null
 
 function getDatabasePath() {
@@ -286,6 +286,68 @@ function applyMigrations(db: DatabaseInstance) {
 
         INSERT INTO schema_migrations (version) VALUES (4);
       `)
+    }
+
+    if (currentVersion < 5) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ai_requests (
+          id INTEGER PRIMARY KEY,
+          model TEXT,
+          request_payload TEXT,
+          response_payload TEXT,
+          status TEXT NOT NULL,
+          error TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ai_requests_created
+          ON ai_requests (created_at DESC);
+
+        INSERT INTO schema_migrations (version) VALUES (5);
+      `)
+    }
+
+    if (currentVersion < 6) {
+      const columns = db.prepare(`PRAGMA table_info(ai_requests);`).all() as {
+        name: string
+      }[]
+      const existing = new Set(columns.map((col) => col.name))
+      const addColumn = (name: string, type: string) => {
+        if (!existing.has(name)) {
+          db.exec(`ALTER TABLE ai_requests ADD COLUMN ${name} ${type};`)
+        }
+      }
+
+      addColumn('input_tokens', 'INTEGER')
+      addColumn('output_tokens', 'INTEGER')
+      addColumn('total_tokens', 'INTEGER')
+      addColumn('cost_usd', 'REAL')
+
+      db.exec(`INSERT INTO schema_migrations (version) VALUES (6);`)
+    }
+
+    if (currentVersion < 7) {
+      const columns = db.prepare(`PRAGMA table_info(ai_settings);`).all() as {
+        name: string
+      }[]
+      const existing = new Set(columns.map((col) => col.name))
+      const addColumn = (name: string, type: string) => {
+        if (!existing.has(name)) {
+          db.exec(`ALTER TABLE ai_settings ADD COLUMN ${name} ${type};`)
+        }
+      }
+
+      addColumn('input_cost_per_1m', 'REAL')
+      addColumn('output_cost_per_1m', 'REAL')
+
+      db.exec(`
+        UPDATE ai_settings
+        SET input_cost_per_1m = COALESCE(input_cost_per_1m, 0.15),
+            output_cost_per_1m = COALESCE(output_cost_per_1m, 0.6)
+        WHERE id = 1
+      `)
+
+      db.exec(`INSERT INTO schema_migrations (version) VALUES (7);`)
     }
   })()
 }
@@ -611,6 +673,8 @@ export type AiSettingsRow = {
   model: string
   enabled: number
   confidenceThreshold: number
+  inputCostPer1M: number | null
+  outputCostPer1M: number | null
 }
 
 export function getAiSettings() {
@@ -622,18 +686,27 @@ export function getAiSettings() {
           id,
           model,
           enabled,
-          confidence_threshold as confidenceThreshold
+          confidence_threshold as confidenceThreshold,
+          input_cost_per_1m as inputCostPer1M,
+          output_cost_per_1m as outputCostPer1M
         FROM ai_settings
         WHERE id = 1
       `
     )
-    .get() as AiSettingsRow | undefined
+  .get() as AiSettingsRow | undefined
 
   if (!row) {
     db.prepare(
       `
-        INSERT INTO ai_settings (id, model, enabled, confidence_threshold)
-        VALUES (1, 'gpt-4o-mini-2024-07-18', 0, 0.85)
+        INSERT INTO ai_settings (
+          id,
+          model,
+          enabled,
+          confidence_threshold,
+          input_cost_per_1m,
+          output_cost_per_1m
+        )
+        VALUES (1, 'gpt-4o-mini-2024-07-18', 0, 0.85, 0.15, 0.6)
       `
     ).run()
     return getAiSettings()
@@ -646,6 +719,8 @@ export function updateAiSettings(updates: {
   model?: string
   enabled?: number
   confidenceThreshold?: number
+  inputCostPer1M?: number | null
+  outputCostPer1M?: number | null
 }) {
   const db = initializeDatabase()
   const current = getAiSettings()
@@ -653,6 +728,8 @@ export function updateAiSettings(updates: {
     model: updates.model ?? current.model,
     enabled: updates.enabled ?? current.enabled,
     confidenceThreshold: updates.confidenceThreshold ?? current.confidenceThreshold,
+    inputCostPer1M: updates.inputCostPer1M ?? current.inputCostPer1M,
+    outputCostPer1M: updates.outputCostPer1M ?? current.outputCostPer1M,
   }
 
   db.prepare(
@@ -661,12 +738,178 @@ export function updateAiSettings(updates: {
       SET model = ?,
           enabled = ?,
           confidence_threshold = ?,
+          input_cost_per_1m = ?,
+          output_cost_per_1m = ?,
           updated_at = datetime('now')
       WHERE id = 1
     `
-  ).run(next.model, next.enabled, next.confidenceThreshold)
+  ).run(
+    next.model,
+    next.enabled,
+    next.confidenceThreshold,
+    next.inputCostPer1M,
+    next.outputCostPer1M
+  )
 
   return getAiSettings()
+}
+
+export type AiRequestRow = {
+  id: number
+  model: string | null
+  requestPayload: string | null
+  responsePayload: string | null
+  status: string
+  error: string | null
+  inputTokens: number | null
+  outputTokens: number | null
+  totalTokens: number | null
+  costUsd: number | null
+  createdAt: string
+}
+
+export function insertAiRequest(input: {
+  model?: string | null
+  requestPayload?: string | null
+  responsePayload?: string | null
+  status: string
+  error?: string | null
+  inputTokens?: number | null
+  outputTokens?: number | null
+  totalTokens?: number | null
+  costUsd?: number | null
+}) {
+  const db = initializeDatabase()
+  const result = db
+    .prepare(
+      `
+        INSERT INTO ai_requests (
+          model,
+          request_payload,
+          response_payload,
+          status,
+          error,
+          input_tokens,
+          output_tokens,
+          total_tokens,
+          cost_usd
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      input.model ?? null,
+      input.requestPayload ?? null,
+      input.responsePayload ?? null,
+      input.status,
+      input.error ?? null,
+      input.inputTokens ?? null,
+      input.outputTokens ?? null,
+      input.totalTokens ?? null,
+      input.costUsd ?? null
+    )
+  return result.lastInsertRowid as number
+}
+
+export function listAiRequests(limit = 100) {
+  const db = initializeDatabase()
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          id,
+          model,
+          request_payload as requestPayload,
+          response_payload as responsePayload,
+          status,
+          error,
+          input_tokens as inputTokens,
+          output_tokens as outputTokens,
+          total_tokens as totalTokens,
+          cost_usd as costUsd,
+          created_at as createdAt
+        FROM ai_requests
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+      `
+    )
+    .all(limit) as AiRequestRow[]
+  return rows
+}
+
+export type AiSuggestionRow = {
+  transactionId: number
+  categoryId: number
+  confidence: number
+  reason: string | null
+  model: string | null
+}
+
+export function upsertAiSuggestions(
+  rows: Array<{
+    transactionId: number
+    categoryId: number
+    confidence: number
+    reason?: string | null
+    model?: string | null
+  }>
+) {
+  const db = initializeDatabase()
+  const stmt = db.prepare(
+    `
+      INSERT INTO ai_suggestions (
+        transaction_id,
+        category_id,
+        confidence,
+        reason,
+        model
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(transaction_id) DO UPDATE SET
+        category_id = excluded.category_id,
+        confidence = excluded.confidence,
+        reason = excluded.reason,
+        model = excluded.model,
+        created_at = datetime('now')
+    `
+  )
+
+  const run = db.transaction((items: typeof rows) => {
+    for (const item of items) {
+      stmt.run(
+        item.transactionId,
+        item.categoryId,
+        item.confidence,
+        item.reason ?? null,
+        item.model ?? null
+      )
+    }
+  })
+
+  run(rows)
+}
+
+export function getAiSuggestionsForTransactions(transactionIds: number[]) {
+  if (transactionIds.length === 0) {
+    return []
+  }
+
+  const db = initializeDatabase()
+  const placeholders = transactionIds.map(() => '?').join(', ')
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          transaction_id as transactionId,
+          category_id as categoryId,
+          confidence,
+          reason,
+          model
+        FROM ai_suggestions
+        WHERE transaction_id IN (${placeholders})
+      `
+    )
+    .all(...transactionIds) as AiSuggestionRow[]
+
+  return rows
 }
 
 export function createRule(input: {

@@ -96,18 +96,55 @@ interface Window {
         model: string
         enabled: number
         confidenceThreshold: number
+        inputCostPer1M: number | null
+        outputCostPer1M: number | null
       }>
       updateSettings: (payload: {
         model?: string
         enabled?: number
         confidenceThreshold?: number
+        inputCostPer1M?: number | null
+        outputCostPer1M?: number | null
       }) => Promise<{
         id: number
         model: string
         enabled: number
         confidenceThreshold: number
+        inputCostPer1M: number | null
+        outputCostPer1M: number | null
       }>
       keyStatus: () => Promise<{ present: boolean }>
+      suggest: (payload: {
+        transactions: Array<{
+          id: number
+          bookingDate: string
+          amount: number
+          currency: string
+          payee: string | null
+          purpose: string | null
+        }>
+        categories: Array<{ id: number; name: string }>
+      }) => Promise<{ applied: number; error?: string }>
+      suggestions: (payload: { transactionIds: number[] }) => Promise<Array<{
+        transactionId: number
+        categoryId: number
+        confidence: number
+        reason: string | null
+        model: string | null
+      }>>
+      listRequests: (payload?: { limit?: number }) => Promise<Array<{
+        id: number
+        model: string | null
+        requestPayload: string | null
+        responsePayload: string | null
+        status: string
+        error: string | null
+        inputTokens: number | null
+        outputTokens: number | null
+        totalTokens: number | null
+        costUsd: number | null
+        createdAt: string
+      }>>
     }
   }
 }
