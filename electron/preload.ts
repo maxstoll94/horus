@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('transactions:add-category', payload),
     removeCategory: (payload: { transactionId: number; categoryId: number }) =>
       ipcRenderer.invoke('transactions:remove-category', payload),
+    delete: (payload: { id: number }) =>
+      ipcRenderer.invoke('transactions:delete', payload),
   },
   categories: {
     list: (filters?: { limit?: number; offset?: number; search?: string }) =>

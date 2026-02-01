@@ -8,7 +8,7 @@ const Database = require('better-sqlite3') as typeof import('better-sqlite3')
 type DatabaseInstance = import('better-sqlite3').Database
 type RunResult = import('better-sqlite3').RunResult
 
-const SCHEMA_VERSION = 9
+const SCHEMA_VERSION = 10
 let dbInstance: DatabaseInstance | null = null
 
 function getDatabasePath() {
@@ -387,6 +387,20 @@ function applyMigrations(db: DatabaseInstance) {
       }
       db.exec(`INSERT INTO schema_migrations (version) VALUES (9);`)
     }
+
+    if (currentVersion < 10) {
+      const columns = db.prepare(`PRAGMA table_info(imports);`).all() as {
+        name: string
+      }[]
+      const existing = new Set(columns.map((col) => col.name))
+      if (!existing.has('file_hash')) {
+        db.exec(`ALTER TABLE imports ADD COLUMN file_hash TEXT;`)
+      }
+      db.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_imports_file_hash ON imports (file_hash);`
+      )
+      db.exec(`INSERT INTO schema_migrations (version) VALUES (10);`)
+    }
   })()
 }
 
@@ -439,14 +453,26 @@ export type TransactionInsert = {
   rawHash: string
 }
 
-export function insertImport(source: string, fileName: string) {
+export function insertImport(
+  source: string,
+  fileName: string,
+  fileHash?: string | null
+) {
   const db = initializeDatabase()
   const stmt = db.prepare(
-    `INSERT INTO imports (source, file_name) VALUES (?, ?)`
+    `INSERT INTO imports (source, file_name, file_hash) VALUES (?, ?, ?)`
   )
-  const result = stmt.run(source, fileName) as RunResult
+  const result = stmt.run(source, fileName, fileHash ?? null) as RunResult
 
   return result.lastInsertRowid as number
+}
+
+export function hasImportHash(fileHash: string) {
+  const db = initializeDatabase()
+  const row = db
+    .prepare(`SELECT 1 FROM imports WHERE file_hash = ? LIMIT 1`)
+    .get(fileHash) as { 1: number } | undefined
+  return Boolean(row)
 }
 
 export function insertTransactions(rows: TransactionInsert[]) {
@@ -502,6 +528,17 @@ export function insertTransactions(rows: TransactionInsert[]) {
   transaction(rows)
 
   return { inserted, skipped }
+}
+
+export function deleteTransaction(id: number) {
+  const db = initializeDatabase()
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM transaction_categories WHERE transaction_id = ?`).run(id)
+    const result = db.prepare(`DELETE FROM transactions WHERE id = ?`).run(id)
+    return result.changes > 0
+  })
+
+  return tx()
 }
 
 export type TransactionRow = {
@@ -803,6 +840,18 @@ export function listUncategorizedTransactions(filters: TransactionListFilters = 
   const limit = filters.limit ?? 200
   const offset = filters.offset ?? 0
 
+  const total = db
+    .prepare(
+      `
+        SELECT COUNT(1) as total
+        FROM transactions t
+        LEFT JOIN transaction_categories tc
+          ON tc.transaction_id = t.id
+        WHERE tc.transaction_id IS NULL
+      `
+    )
+    .get() as { total: number }
+
   const rows = db
     .prepare(
       `
@@ -824,7 +873,7 @@ export function listUncategorizedTransactions(filters: TransactionListFilters = 
     )
     .all(limit, offset) as UncategorizedTransactionRow[]
 
-  return rows
+  return { rows, total: total.total }
 }
 
 export function addTransactionCategory(transactionId: number, categoryId: number) {
