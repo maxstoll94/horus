@@ -423,6 +423,16 @@ button {
   content: 'C';
 }
 
+.rule-icon-save {
+  background: #ecfdf3;
+  border-color: #16a34a;
+  color: #15803d;
+}
+
+.rule-icon-save::after {
+  content: 'S';
+}
+
 .rule-action-remove {
   border-color: #fecaca;
   background: #fef2f2;
@@ -445,7 +455,7 @@ button {
 }
 
 .rule-icon-remove::after {
-  content: 'R';
+  content: 'D';
 }
 
 .ai-form {
