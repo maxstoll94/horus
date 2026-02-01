@@ -6,8 +6,15 @@ interface Window {
       getInfo: () => Promise<{ path: string; schemaVersion: number }>
     }
     import: {
-      pickFile: () => Promise<string | null>
+      pickFile: (provider?: 'dkb' | 'ing') => Promise<string | null>
       dkb: (filePath: string) => Promise<{
+        success: boolean
+        inserted?: number
+        skipped?: number
+        warnings?: string[]
+        error?: string
+      }>
+      ing: (filePath: string) => Promise<{
         success: boolean
         inserted?: number
         skipped?: number
@@ -16,15 +23,22 @@ interface Window {
       }>
     }
     transactions: {
-      list: (filters?: { limit?: number; offset?: number }) => Promise<Array<{
-        id: number
-        bookingDate: string
-        amount: number
-        currency: string
-        payee: string | null
-        purpose: string | null
-        categoryCount: number
-      }>>
+      list: (filters?: {
+        limit?: number
+        offset?: number
+        search?: string
+      }) => Promise<{
+        rows: Array<{
+          id: number
+          bookingDate: string
+          amount: number
+          currency: string
+          payee: string | null
+          purpose: string | null
+          categoryCount: number
+        }>
+        total: number
+      }>
       listUncategorized: (filters?: { limit?: number; offset?: number }) => Promise<Array<{
         id: number
         bookingDate: string
@@ -56,12 +70,19 @@ interface Window {
       removeCategory: (payload: { transactionId: number; categoryId: number }) => Promise<boolean>
     }
     categories: {
-      list: () => Promise<Array<{
-        id: number
-        name: string
-        color: string | null
-        isActive: number
-      }>>
+      list: (filters?: {
+        limit?: number
+        offset?: number
+        search?: string
+      }) => Promise<{
+        rows: Array<{
+          id: number
+          name: string
+          color: string | null
+          isActive: number
+        }>
+        total: number
+      }>
       create: (payload: { name: string; color?: string | null }) => Promise<number | null>
       update: (payload: {
         id: number
@@ -75,16 +96,25 @@ interface Window {
       }>
     }
     rules: {
-      list: () => Promise<Array<{
-        id: number
-        matcherType: string
-        matcherValue: string
-        categoryId: number
-        priority: number
-        isActive: number
-      }>>
+      list: (filters?: {
+        limit?: number
+        offset?: number
+        search?: string
+      }) => Promise<{
+        rows: Array<{
+          id: number
+          matcherType: string
+          matcherOperator: string
+          matcherValue: string
+          categoryId: number
+          priority: number
+          isActive: number
+        }>
+        total: number
+      }>
       create: (payload: {
         matcherType: string
+        matcherOperator?: string
         matcherValue: string
         categoryId: number
         priority?: number
@@ -93,6 +123,7 @@ interface Window {
       update: (payload: {
         id: number
         matcherType?: string
+        matcherOperator?: string
         matcherValue?: string
         categoryId?: number
         priority?: number
@@ -173,6 +204,7 @@ interface Window {
         categoryName: string
         categoryColor: string | null
         totalSpend: number
+        totalIncome: number
         transactionCount: number
       }>>
       summaryRange: (payload: {
@@ -195,6 +227,7 @@ interface Window {
         categoryName: string
         categoryColor: string | null
         totalSpend: number
+        totalIncome: number
         transactionCount: number
       }>>
       trend: (payload?: { months?: number }) => Promise<Array<{

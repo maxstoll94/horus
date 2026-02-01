@@ -25,8 +25,9 @@ electron.contextBridge.exposeInMainWorld("api", {
     getInfo: () => electron.ipcRenderer.invoke("db:get-info")
   },
   import: {
-    pickFile: () => electron.ipcRenderer.invoke("import:pick-file"),
-    dkb: (filePath) => electron.ipcRenderer.invoke("import:dkb", filePath)
+    pickFile: (provider) => electron.ipcRenderer.invoke("import:pick-file", provider),
+    dkb: (filePath) => electron.ipcRenderer.invoke("import:dkb", filePath),
+    ing: (filePath) => electron.ipcRenderer.invoke("import:ing", filePath)
   },
   transactions: {
     list: (filters) => electron.ipcRenderer.invoke("transactions:list", filters),
@@ -36,13 +37,13 @@ electron.contextBridge.exposeInMainWorld("api", {
     removeCategory: (payload) => electron.ipcRenderer.invoke("transactions:remove-category", payload)
   },
   categories: {
-    list: () => electron.ipcRenderer.invoke("categories:list"),
+    list: (filters) => electron.ipcRenderer.invoke("categories:list", filters),
     create: (payload) => electron.ipcRenderer.invoke("categories:create", payload),
     update: (payload) => electron.ipcRenderer.invoke("categories:update", payload),
     delete: (payload) => electron.ipcRenderer.invoke("categories:delete", payload)
   },
   rules: {
-    list: () => electron.ipcRenderer.invoke("rules:list"),
+    list: (filters) => electron.ipcRenderer.invoke("rules:list", filters),
     create: (payload) => electron.ipcRenderer.invoke("rules:create", payload),
     update: (payload) => electron.ipcRenderer.invoke("rules:update", payload),
     delete: (payload) => electron.ipcRenderer.invoke("rules:delete", payload),

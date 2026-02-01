@@ -36,6 +36,8 @@ import {
   deleteCategory,
 } from './db'
 import { parseDkbCsv } from './importers/dkb'
+import { parseIngCsv } from './importers/ing'
+import type { ImportProvider } from './importers/types'
 import { suggestCategories } from './ai'
 
 const require = createRequire(import.meta.url)
@@ -111,7 +113,7 @@ app.on('activate', () => {
 app.whenReady().then(() => {
   initializeDatabase()
   ipcMain.handle('db:get-info', () => getDatabaseInfo())
-  ipcMain.handle('categories:list', () => listCategories())
+  ipcMain.handle('categories:list', (_event, filters) => listCategories(filters))
   ipcMain.handle('categories:create', (_event, payload) => {
     const name = typeof payload?.name === 'string' ? payload.name.trim() : ''
     if (!name) {
@@ -135,7 +137,7 @@ app.whenReady().then(() => {
     }
     return deleteCategory(payload.id)
   })
-  ipcMain.handle('rules:list', () => listRules())
+  ipcMain.handle('rules:list', (_event, filters) => listRules(filters))
   ipcMain.handle('rules:create', (_event, payload) => {
     if (!payload?.matcherType || !payload?.matcherValue || !payload?.categoryId) {
       return null
@@ -263,9 +265,15 @@ app.whenReady().then(() => {
     }
     return removeTransactionCategory(payload.transactionId, payload.categoryId)
   })
-  ipcMain.handle('import:pick-file', async () => {
+  ipcMain.handle('import:pick-file', async (_event, provider?: ImportProvider) => {
+    const title =
+      provider === 'ing'
+        ? 'Select ING CSV file'
+        : provider === 'dkb'
+        ? 'Select DKB CSV file'
+        : 'Select CSV file'
     const result = await dialog.showOpenDialog({
-      title: 'Select DKB CSV file',
+      title,
       properties: ['openFile'],
       filters: [{ name: 'CSV', extensions: ['csv'] }],
     })
@@ -289,6 +297,28 @@ app.whenReady().then(() => {
     }
 
     insertImport('dkb', path.basename(filePath))
+    const { inserted, skipped } = insertTransactions(transactions)
+
+    return {
+      success: true,
+      inserted,
+      skipped,
+      warnings,
+    }
+  })
+  ipcMain.handle('import:ing', async (_event, filePath: string) => {
+    if (!filePath) {
+      return { success: false, error: 'No file path provided.' }
+    }
+
+    const contents = await readFile(filePath, 'utf-8')
+    const { transactions, warnings } = parseIngCsv(contents)
+
+    if (transactions.length === 0) {
+      return { success: false, error: 'No transactions found.', warnings }
+    }
+
+    insertImport('ing', path.basename(filePath))
     const { inserted, skipped } = insertTransactions(transactions)
 
     return {

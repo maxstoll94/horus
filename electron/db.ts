@@ -1,4 +1,4 @@
-import path from 'node:path'
+﻿import path from 'node:path'
 import { app } from 'electron'
 import { createRequire } from 'node:module'
 
@@ -8,7 +8,7 @@ const Database = require('better-sqlite3') as typeof import('better-sqlite3')
 type DatabaseInstance = import('better-sqlite3').Database
 type RunResult = import('better-sqlite3').RunResult
 
-const SCHEMA_VERSION = 8
+const SCHEMA_VERSION = 9
 let dbInstance: DatabaseInstance | null = null
 
 function getDatabasePath() {
@@ -58,6 +58,7 @@ function applyMigrations(db: DatabaseInstance) {
         CREATE TABLE IF NOT EXISTS rules (
           id INTEGER PRIMARY KEY,
           matcher_type TEXT NOT NULL,
+          matcher_operator TEXT NOT NULL DEFAULT 'contains',
           matcher_value TEXT NOT NULL,
           category_id INTEGER NOT NULL,
           priority INTEGER NOT NULL DEFAULT 0,
@@ -373,6 +374,19 @@ function applyMigrations(db: DatabaseInstance) {
 
       db.exec(`INSERT INTO schema_migrations (version) VALUES (8);`)
     }
+
+    if (currentVersion < 9) {
+      const columns = db.prepare(`PRAGMA table_info(rules);`).all() as {
+        name: string
+      }[]
+      const existing = new Set(columns.map((col) => col.name))
+      if (!existing.has('matcher_operator')) {
+        db.exec(
+          `ALTER TABLE rules ADD COLUMN matcher_operator TEXT NOT NULL DEFAULT 'contains';`
+        )
+      }
+      db.exec(`INSERT INTO schema_migrations (version) VALUES (9);`)
+    }
   })()
 }
 
@@ -503,6 +517,7 @@ export type TransactionRow = {
 export type TransactionListFilters = {
   limit?: number
   offset?: number
+  search?: string
 }
 
 export type DashboardSummaryRow = {
@@ -520,6 +535,7 @@ export type DashboardCategorySpendRow = {
   categoryName: string
   categoryColor: string | null
   totalSpend: number
+  totalIncome: number
   transactionCount: number
 }
 
@@ -659,6 +675,7 @@ export function listDashboardCategorySpend(month: string) {
           c.name as categoryName,
           c.color as categoryColor,
           COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END), 0) as totalSpend,
+          COALESCE(SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END), 0) as totalIncome,
           COUNT(1) as transactionCount
         FROM transaction_categories tc
         INNER JOIN transactions t
@@ -666,9 +683,8 @@ export function listDashboardCategorySpend(month: string) {
         INNER JOIN categories c
           ON c.id = tc.category_id
         WHERE substr(t.booking_date, 1, 7) = ?
-          AND t.amount < 0
         GROUP BY c.id, c.name
-        ORDER BY totalSpend DESC, c.name ASC
+        ORDER BY totalSpend DESC, totalIncome DESC, c.name ASC
       `
     )
     .all(month) as DashboardCategorySpendRow[]
@@ -689,6 +705,7 @@ export function listDashboardCategorySpendRange(
           c.name as categoryName,
           c.color as categoryColor,
           COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END), 0) as totalSpend,
+          COALESCE(SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END), 0) as totalIncome,
           COUNT(1) as transactionCount
         FROM transaction_categories tc
         INNER JOIN transactions t
@@ -696,9 +713,8 @@ export function listDashboardCategorySpendRange(
         INNER JOIN categories c
           ON c.id = tc.category_id
         WHERE substr(t.booking_date, 1, 7) BETWEEN ? AND ?
-          AND t.amount < 0
         GROUP BY c.id, c.name, c.color
-        ORDER BY totalSpend DESC, c.name ASC
+        ORDER BY totalSpend DESC, totalIncome DESC, c.name ASC
       `
     )
     .all(startMonth, endMonth) as DashboardCategorySpendRow[]
@@ -731,6 +747,16 @@ export function listTransactions(filters: TransactionListFilters = {}) {
   const db = initializeDatabase()
   const limit = filters.limit ?? 200
   const offset = filters.offset ?? 0
+  const search = filters.search?.trim()
+  const params: Array<string | number> = []
+
+  const where = search
+    ? (() => {
+        const term = `%${search.toLowerCase()}%`
+        params.push(term, term)
+        return `WHERE lower(t.payee) LIKE ? OR lower(t.purpose) LIKE ?`
+      })()
+    : ''
 
   const rows = db
     .prepare(
@@ -748,13 +774,24 @@ export function listTransactions(filters: TransactionListFilters = {}) {
             WHERE tc.transaction_id = t.id
           ) as categoryCount
         FROM transactions t
+        ${where}
         ORDER BY booking_date DESC, id DESC
         LIMIT ? OFFSET ?
       `
     )
-    .all(limit, offset) as TransactionRow[]
+    .all(...params, limit, offset) as TransactionRow[]
 
-  return rows
+  const total = db
+    .prepare(
+      `
+        SELECT COUNT(1) as total
+        FROM transactions t
+        ${where}
+      `
+    )
+    .get(...params) as { total: number }
+
+  return { rows, total: total.total }
 }
 
 export type UncategorizedTransactionRow = Omit<TransactionRow, 'categoryCount'> & {
@@ -897,8 +934,21 @@ export type CategoryRow = {
   isActive: number
 }
 
-export function listCategories() {
+export function listCategories(filters: { limit?: number; offset?: number; search?: string } = {}) {
   const db = initializeDatabase()
+  const limit = filters.limit ?? 200
+  const offset = filters.offset ?? 0
+  const search = filters.search?.trim()
+  const params: Array<string | number> = []
+
+  const where = search
+    ? (() => {
+        const term = `%${search.toLowerCase()}%`
+        params.push(term)
+        return `WHERE lower(name) LIKE ?`
+      })()
+    : ''
+
   const rows = db
     .prepare(
       `
@@ -908,42 +958,83 @@ export function listCategories() {
           color,
           is_active as isActive
         FROM categories
+        ${where}
         ORDER BY name ASC
+        LIMIT ? OFFSET ?
       `
     )
-    .all() as CategoryRow[]
+    .all(...params, limit, offset) as CategoryRow[]
 
-  return rows
+  const total = db
+    .prepare(
+      `
+        SELECT COUNT(1) as total
+        FROM categories
+        ${where}
+      `
+    )
+    .get(...params) as { total: number }
+
+  return { rows, total: total.total }
 }
 
 export type RuleRow = {
   id: number
   matcherType: string
+  matcherOperator: string
   matcherValue: string
   categoryId: number
   priority: number
   isActive: number
 }
 
-export function listRules() {
+export function listRules(filters: { limit?: number; offset?: number; search?: string } = {}) {
   const db = initializeDatabase()
+  const limit = filters.limit ?? 200
+  const offset = filters.offset ?? 0
+  const search = filters.search?.trim()
+  const params: Array<string | number> = []
+
+  const where = search
+    ? (() => {
+        const term = `%${search.toLowerCase()}%`
+        params.push(term, term)
+        return `WHERE lower(r.matcher_value) LIKE ? OR lower(c.name) LIKE ?`
+      })()
+    : ''
+
   const rows = db
     .prepare(
       `
         SELECT
-          id,
-          matcher_type as matcherType,
-          matcher_value as matcherValue,
-          category_id as categoryId,
-          priority,
-          is_active as isActive
-        FROM rules
-        ORDER BY priority DESC, id DESC
+          r.id,
+          r.matcher_type as matcherType,
+          r.matcher_operator as matcherOperator,
+          r.matcher_value as matcherValue,
+          r.category_id as categoryId,
+          r.priority,
+          r.is_active as isActive
+        FROM rules r
+        LEFT JOIN categories c ON c.id = r.category_id
+        ${where}
+        ORDER BY r.priority DESC, r.id DESC
+        LIMIT ? OFFSET ?
       `
     )
-    .all() as RuleRow[]
+    .all(...params, limit, offset) as RuleRow[]
 
-  return rows
+  const total = db
+    .prepare(
+      `
+        SELECT COUNT(1) as total
+        FROM rules r
+        LEFT JOIN categories c ON c.id = r.category_id
+        ${where}
+      `
+    )
+    .get(...params) as { total: number }
+
+  return { rows, total: total.total }
 }
 
 export type AiSettingsRow = {
@@ -1140,7 +1231,7 @@ export function upsertAiSuggestions(
         confidence,
         reason,
         model
-      ) VALUES (?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(transaction_id) DO UPDATE SET
         category_id = excluded.category_id,
         confidence = excluded.confidence,
@@ -1192,6 +1283,7 @@ export function getAiSuggestionsForTransactions(transactionIds: number[]) {
 
 export function createRule(input: {
   matcherType: string
+  matcherOperator?: string
   matcherValue: string
   categoryId: number
   priority?: number
@@ -1202,15 +1294,17 @@ export function createRule(input: {
     `
       INSERT INTO rules (
         matcher_type,
+        matcher_operator,
         matcher_value,
         category_id,
         priority,
         is_active
-      ) VALUES (?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?)
     `
   )
   const result = stmt.run(
     input.matcherType,
+    input.matcherOperator ?? 'contains',
     input.matcherValue,
     input.categoryId,
     input.priority ?? 100,
@@ -1224,6 +1318,7 @@ export function updateRule(
   id: number,
   updates: Partial<{
     matcherType: string
+    matcherOperator: string
     matcherValue: string
     categoryId: number
     priority: number
@@ -1236,6 +1331,7 @@ export function updateRule(
       `
         SELECT
           matcher_type as matcherType,
+          matcher_operator as matcherOperator,
           matcher_value as matcherValue,
           category_id as categoryId,
           priority,
@@ -1252,6 +1348,7 @@ export function updateRule(
 
   const next = {
     matcherType: updates.matcherType ?? current.matcherType,
+    matcherOperator: updates.matcherOperator ?? current.matcherOperator,
     matcherValue: updates.matcherValue ?? current.matcherValue,
     categoryId: updates.categoryId ?? current.categoryId,
     priority: updates.priority ?? current.priority,
@@ -1262,6 +1359,7 @@ export function updateRule(
     `
       UPDATE rules
       SET matcher_type = ?,
+          matcher_operator = ?,
           matcher_value = ?,
           category_id = ?,
           priority = ?,
@@ -1271,6 +1369,7 @@ export function updateRule(
     `
   ).run(
     next.matcherType,
+    next.matcherOperator,
     next.matcherValue,
     next.categoryId,
     next.priority,
@@ -1301,19 +1400,28 @@ function matchesRule(rule: RuleRow, tx: RuleMatchTransaction) {
   if (!value) {
     return false
   }
+  const operator = (rule.matcherOperator || 'contains').toLowerCase()
+  const matchesText = (field: string | null) => {
+    const haystack = (field ?? '').toLowerCase()
+    const needle = value.toLowerCase()
+    if (operator === 'equals') {
+      return haystack === needle
+    }
+    return haystack.includes(needle)
+  }
 
   switch (rule.matcherType) {
     case 'payee': {
-      return (tx.payee ?? '').toLowerCase().includes(value.toLowerCase())
+      return matchesText(tx.payee)
     }
     case 'purpose': {
-      return (tx.purpose ?? '').toLowerCase().includes(value.toLowerCase())
+      return matchesText(tx.purpose)
     }
     case 'iban': {
-      return (tx.iban ?? '').toLowerCase().includes(value.toLowerCase())
+      return matchesText(tx.iban)
     }
     case 'bic': {
-      return (tx.bic ?? '').toLowerCase().includes(value.toLowerCase())
+      return matchesText(tx.bic)
     }
     case 'amount': {
       const target = Number.parseFloat(value.replace(',', '.'))
@@ -1346,6 +1454,7 @@ export function applyRulesToUncategorized() {
         SELECT
           id,
           matcher_type as matcherType,
+          matcher_operator as matcherOperator,
           matcher_value as matcherValue,
           category_id as categoryId,
           priority,
@@ -1485,3 +1594,4 @@ export function deleteCategory(id: number) {
     throw error
   }
 }
+
