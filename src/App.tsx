@@ -13,6 +13,7 @@ import {
   YAxis,
 } from 'recharts'
 import './App.css'
+import horusLogo from './assets/horus-logo-v2.svg'
 import { DataTable } from './components/DataTable'
 
 type TransactionRow = {
@@ -1745,7 +1746,7 @@ function App() {
       </div>
       <aside className="sidebar">
         <div className="brand">
-          <img className="brand-logo" src="/horus-logo-v2.svg" alt="Horus logo" />
+          <img className="brand-logo" src={horusLogo} alt="Horus logo" />
         </div>
         <nav className="nav">
           <button
