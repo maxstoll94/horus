@@ -39,15 +39,18 @@ interface Window {
         }>
         total: number
       }>
-      listUncategorized: (filters?: { limit?: number; offset?: number }) => Promise<Array<{
-        id: number
-        bookingDate: string
-        amount: number
-        currency: string
-        payee: string | null
-        purpose: string | null
-        categoryCount: number
-      }>>
+      listUncategorized: (filters?: { limit?: number; offset?: number }) => Promise<{
+        rows: Array<{
+          id: number
+          bookingDate: string
+          amount: number
+          currency: string
+          payee: string | null
+          purpose: string | null
+          categoryCount: number
+        }>
+        total: number
+      }>
       listCategorized: (filters?: {
         limit?: number
         offset?: number
@@ -68,6 +71,7 @@ interface Window {
       }>
       addCategory: (payload: { transactionId: number; categoryId: number }) => Promise<boolean>
       removeCategory: (payload: { transactionId: number; categoryId: number }) => Promise<boolean>
+      delete: (payload: { id: number }) => Promise<boolean>
     }
     categories: {
       list: (filters?: {

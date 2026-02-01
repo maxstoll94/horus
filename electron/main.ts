@@ -1,9 +1,9 @@
 import 'dotenv/config'
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
-import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { readFile } from 'node:fs/promises'
+import crypto from 'node:crypto'
 import {
   addTransactionCategory,
   closeDatabase,
@@ -20,6 +20,7 @@ import {
   getDashboardSummaryRange,
   insertImport,
   insertTransactions,
+  hasImportHash,
   listDashboardCategorySpend,
   listDashboardCategorySpendRange,
   listDashboardMonths,
@@ -34,13 +35,13 @@ import {
   updateRule,
   updateCategory,
   deleteCategory,
+  deleteTransaction,
 } from './db'
 import { parseDkbCsv } from './importers/dkb'
 import { parseIngCsv } from './importers/ing'
 import type { ImportProvider } from './importers/types'
 import { suggestCategories } from './ai'
 
-const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // The built directory structure
@@ -65,7 +66,7 @@ let win: BrowserWindow | null
 
 function createWindow() {
   win = new BrowserWindow({
-    icon: path.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
+    icon: path.join(process.env.VITE_PUBLIC, 'horus-icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
     },
@@ -265,6 +266,12 @@ app.whenReady().then(() => {
     }
     return removeTransactionCategory(payload.transactionId, payload.categoryId)
   })
+  ipcMain.handle('transactions:delete', (_event, payload) => {
+    if (!payload?.id) {
+      return false
+    }
+    return deleteTransaction(payload.id)
+  })
   ipcMain.handle('import:pick-file', async (_event, provider?: ImportProvider) => {
     const title =
       provider === 'ing'
@@ -290,13 +297,22 @@ app.whenReady().then(() => {
     }
 
     const contents = await readFile(filePath, 'utf-8')
+    const fileHash = crypto.createHash('sha256').update(contents).digest('hex')
+    if (hasImportHash(fileHash)) {
+      return {
+        success: true,
+        inserted: 0,
+        skipped: 0,
+        warnings: ['This file has already been imported.'],
+      }
+    }
     const { transactions, warnings } = parseDkbCsv(contents)
 
     if (transactions.length === 0) {
       return { success: false, error: 'No transactions found.', warnings }
     }
 
-    insertImport('dkb', path.basename(filePath))
+    insertImport('dkb', path.basename(filePath), fileHash)
     const { inserted, skipped } = insertTransactions(transactions)
 
     return {
@@ -312,13 +328,22 @@ app.whenReady().then(() => {
     }
 
     const contents = await readFile(filePath, 'utf-8')
+    const fileHash = crypto.createHash('sha256').update(contents).digest('hex')
+    if (hasImportHash(fileHash)) {
+      return {
+        success: true,
+        inserted: 0,
+        skipped: 0,
+        warnings: ['This file has already been imported.'],
+      }
+    }
     const { transactions, warnings } = parseIngCsv(contents)
 
     if (transactions.length === 0) {
       return { success: false, error: 'No transactions found.', warnings }
     }
 
-    insertImport('ing', path.basename(filePath))
+    insertImport('ing', path.basename(filePath), fileHash)
     const { inserted, skipped } = insertTransactions(transactions)
 
     return {

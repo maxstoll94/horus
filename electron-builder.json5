@@ -1,9 +1,9 @@
 // @see - https://www.electron.build/configuration/configuration
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "YourAppID",
+  "appId": "com.horus.app",
   "asar": true,
-  "productName": "YourAppName",
+  "productName": "Horus",
   "directories": {
     "output": "release/${version}"
   },
@@ -18,6 +18,7 @@
     "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
   },
   "win": {
+    "icon": "public/horus-icon.ico",
     "target": [
       {
         "target": "nsis",

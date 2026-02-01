@@ -25,9 +25,14 @@ type TransactionRow = {
   categoryCount: number
 }
 
-type CategorizedTransactionRow = TransactionRow & {
+type RuleRow = {
+  id: number
+  matcherType: string
+  matcherOperator: string
+  matcherValue: string
   categoryId: number
-  categoryName: string
+  priority: number
+  isActive: number
 }
 
 type CategoryRow = {
@@ -54,6 +59,12 @@ type RuleDraft = {
 type CategoryOption = {
   value: number
   label: string
+}
+
+type Toast = {
+  id: number
+  message: string
+  tone: 'success' | 'error' | 'info'
 }
 
 type CategoryTableMeta = {
@@ -122,6 +133,7 @@ function App() {
   const [transactionsTotal, setTransactionsTotal] = useState(0)
   const [transactionSearch, setTransactionSearch] = useState('')
   const [uncategorized, setUncategorized] = useState<TransactionRow[]>([])
+  const [uncategorizedTotal, setUncategorizedTotal] = useState(0)
   const [categorized, setCategorized] = useState<CategorizedViewRow[]>([])
   const [categorizedTotal, setCategorizedTotal] = useState(0)
   const [loadingTransactions, setLoadingTransactions] = useState(false)
@@ -133,6 +145,11 @@ function App() {
   const [newCategoryColor, setNewCategoryColor] = useState('#4c7cff')
   const [categoryStatus, setCategoryStatus] = useState<string>('')
   const [newCategoryModalOpen, setNewCategoryModalOpen] = useState(false)
+  const [importModalOpen, setImportModalOpen] = useState(false)
+  const [confirmDialog, setConfirmDialog] = useState<{
+    message: string
+    onConfirm: () => void
+  } | null>(null)
   const [categoryEdits, setCategoryEdits] = useState<
     Record<
       number,
@@ -158,10 +175,9 @@ function App() {
   const [categoriesPage, setCategoriesPage] = useState(0)
   const [rulesPage, setRulesPage] = useState(0)
   const [dashboardCategoryPage, setDashboardCategoryPage] = useState(0)
-  const [pageSizeCategories, setPageSizeCategories] = useState(16)
-  const [pageSizeRules, setPageSizeRules] = useState(16)
-  const [pageSizeDashboardTransactions, setPageSizeDashboardTransactions] =
-    useState(7)
+  const [pageSizeCategories] = useState(16)
+  const [pageSizeRules] = useState(16)
+  const [pageSizeDashboardTransactions] = useState(7)
   const [selection, setSelection] = useState<Record<number, number[]>>({})
   const [categorizedFilter, setCategorizedFilter] = useState<number[]>([])
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null)
@@ -183,6 +199,7 @@ function App() {
     outputCostPer1M: number | null
   } | null>(null)
   const [aiKeyPresent, setAiKeyPresent] = useState<boolean | null>(null)
+  const [toasts, setToasts] = useState<Toast[]>([])
   const [aiRequests, setAiRequests] = useState<
     Array<{
       id: number
@@ -395,16 +412,16 @@ function App() {
             styles={{
               control: (base, state) => ({
                 ...base,
-                backgroundColor: '#101010',
-                borderColor: state.isFocused ? '#2b4cff' : '#2a2a2a',
-                boxShadow: state.isFocused ? '0 0 0 1px #2b4cff' : 'none',
+                backgroundColor: '#ffffff',
+                borderColor: state.isFocused ? '#2563eb' : '#d1d5db',
+                boxShadow: state.isFocused ? '0 0 0 1px #2563eb' : 'none',
                 minHeight: 34,
               }),
               menu: (base) => ({
                 ...base,
-                backgroundColor: '#141414',
-                border: '1px solid #2a2a2a',
-                color: '#f0f0f0',
+                backgroundColor: '#ffffff',
+                border: '1px solid #e5e7eb',
+                color: '#1f2937',
               }),
               menuPortal: (base) => ({
                 ...base,
@@ -413,22 +430,22 @@ function App() {
               option: (base, state) => ({
                 ...base,
                 backgroundColor: state.isSelected
-                  ? '#2b4cff'
+                  ? '#2563eb'
                   : state.isFocused
-                  ? '#1f2338'
-                  : '#141414',
-                color: '#f0f0f0',
+                  ? '#eef2ff'
+                  : '#ffffff',
+                color: state.isSelected ? '#ffffff' : '#1f2937',
               }),
-              singleValue: (base) => ({ ...base, color: '#f0f0f0' }),
-              placeholder: (base) => ({ ...base, color: '#bdbdbd' }),
-              input: (base) => ({ ...base, color: '#f0f0f0' }),
+              singleValue: (base) => ({ ...base, color: '#1f2937' }),
+              placeholder: (base) => ({ ...base, color: '#6b7280' }),
+              input: (base) => ({ ...base, color: '#1f2937' }),
               multiValue: (base) => ({
                 ...base,
-                backgroundColor: '#1b1f33',
-                border: '1px solid #2b4cff',
+                backgroundColor: '#eef2ff',
+                border: '1px solid #2563eb',
               }),
-              multiValueLabel: (base) => ({ ...base, color: '#e6e9ff' }),
-              multiValueRemove: (base) => ({ ...base, color: '#cbd3ff' }),
+              multiValueLabel: (base) => ({ ...base, color: '#1f2937' }),
+              multiValueRemove: (base) => ({ ...base, color: '#2563eb' }),
             }}
           />
             {(selection[row.original.id] ?? []).length > 0 && (
@@ -451,12 +468,19 @@ function App() {
         id: 'add',
         header: '',
         cell: ({ row }) => (
-          <button
-            onClick={() => assignCategory(row.original.id)}
-            disabled={(selection[row.original.id] ?? []).length === 0}
-          >
-            Add
-          </button>
+          <div className="rule-actions">
+            <button
+              onClick={() => assignCategory(row.original.id)}
+              disabled={(selection[row.original.id] ?? []).length === 0}
+            >
+              Add
+            </button>
+            <button
+              onClick={() => deleteTransactionRow(row.original.id)}
+            >
+              Remove
+            </button>
+          </div>
         ),
       },
       {
@@ -559,6 +583,15 @@ function App() {
               </button>
             ))}
           </div>
+        ),
+      },
+      {
+        id: 'delete',
+        header: '',
+        cell: ({ row }) => (
+          <button onClick={() => deleteTransactionRow(row.original.id)}>
+            Remove
+          </button>
         ),
       },
     ],
@@ -888,11 +921,12 @@ function App() {
   }
 
   const loadUncategorized = async () => {
-    const rows = await window.api.transactions.listUncategorized({
+    const result = await window.api.transactions.listUncategorized({
       limit: pageSizeUncategorized,
       offset: uncategorizedPage * pageSizeUncategorized,
     })
-    setUncategorized(rows)
+    setUncategorized(result.rows)
+    setUncategorizedTotal(result.total)
   }
 
   const loadCategorized = async () => {
@@ -1200,6 +1234,16 @@ function App() {
   }, [categorizedPage, pageSizeCategorized, categorizedFilter])
 
   useEffect(() => {
+    const maxPage = Math.max(
+      0,
+      Math.ceil(uncategorizedTotal / pageSizeUncategorized) - 1
+    )
+    if (uncategorizedPage > maxPage) {
+      setUncategorizedPage(maxPage)
+    }
+  }, [uncategorizedTotal, pageSizeUncategorized, uncategorizedPage])
+
+  useEffect(() => {
     setCategorizedPage(0)
   }, [categorizedFilter])
 
@@ -1279,12 +1323,32 @@ function App() {
     return () => window.removeEventListener('resize', updatePageSizes)
   }, [])
 
+  const pushToast = (
+    message: string,
+    tone: Toast['tone'] = 'info',
+    duration = 4000
+  ) => {
+    const id = Date.now() + Math.floor(Math.random() * 1000)
+    setToasts((current) => [...current, { id, message, tone }])
+    window.setTimeout(() => {
+      setToasts((current) => current.filter((toast) => toast.id !== id))
+    }, duration)
+  }
+
+  const closeImportModal = () => {
+    setImportModalOpen(false)
+    setFilePath(null)
+    setStatus('Idle')
+    setWarnings([])
+  }
+
   const pickFile = async (provider: 'dkb' | 'ing') => {
     const selected = await window.api.import.pickFile(provider)
     if (selected) {
       setFilePath(selected)
       setImportProvider(provider)
       setStatus('File selected.')
+      pushToast('File selected.', 'info')
       setWarnings([])
     }
   }
@@ -1292,6 +1356,7 @@ function App() {
   const runImport = async () => {
     if (!filePath) {
       setStatus('Pick a CSV file first.')
+      pushToast('Pick a CSV file first.', 'error')
       return
     }
     setStatus('Importing...')
@@ -1301,6 +1366,10 @@ function App() {
         : await window.api.import.dkb(filePath)
     if (result.success) {
       setStatus(`Imported ${result.inserted} rows (skipped ${result.skipped}).`)
+      pushToast(
+        `Imported ${result.inserted} rows (skipped ${result.skipped}).`,
+        'success'
+      )
       loadTransactions()
       loadUncategorized()
       loadCategorized()
@@ -1308,6 +1377,7 @@ function App() {
       loadDashboardData()
     } else {
       setStatus(`Import failed: ${result.error ?? 'Unknown error'}`)
+      pushToast(`Import failed: ${result.error ?? 'Unknown error'}`, 'error')
     }
     setWarnings(result.warnings ?? [])
   }
@@ -1315,6 +1385,7 @@ function App() {
   const createCategory = async () => {
     if (!newCategoryName.trim()) {
       setCategoryStatus('Name is required.')
+      pushToast('Category name is required.', 'error')
       return
     }
 
@@ -1325,10 +1396,12 @@ function App() {
 
     if (!createdId) {
       setCategoryStatus('Category could not be created.')
+      pushToast('Category could not be created.', 'error')
       return
     }
 
     setCategoryStatus('Category created.')
+    pushToast('Category created.', 'success')
     setNewCategoryName('')
     setNewCategoryColor('#4c7cff')
     setNewCategoryModalOpen(false)
@@ -1348,6 +1421,7 @@ function App() {
       isActive: draft.isActive,
     })
     setCategoryStatus('Category saved.')
+    pushToast('Category updated.', 'success')
     loadCategories()
     loadCategoriesAll()
   }
@@ -1356,10 +1430,13 @@ function App() {
     const result = await window.api.categories.delete({ id })
     if (result.deleted) {
       setCategoryStatus('Category deleted.')
+      pushToast('Category deleted.', 'success')
     } else if (result.archived) {
       setCategoryStatus('Category in use. Archived instead.')
+      pushToast('Category in use. Archived instead.', 'info')
     } else {
       setCategoryStatus('Category could not be deleted.')
+      pushToast('Category could not be deleted.', 'error')
     }
     loadCategories()
     loadCategoriesAll()
@@ -1391,11 +1468,34 @@ function App() {
     loadCategorized()
   }
 
+  const deleteTransactionRow = (transactionId: number) => {
+    setConfirmDialog({
+      message: 'Remove this transaction? This cannot be undone.',
+      onConfirm: async () => {
+        const success = await window.api.transactions.delete({
+          id: transactionId,
+        })
+        if (success) {
+          pushToast('Transaction removed.', 'success')
+          loadTransactions()
+          loadUncategorized()
+          loadCategorized()
+          loadDashboardMonths()
+          loadDashboardData()
+        } else {
+          pushToast('Transaction could not be removed.', 'error')
+        }
+        setConfirmDialog(null)
+      },
+    })
+  }
+
   const openRuleDraft = (tx: TransactionRow) => {
     const defaultCategory =
       (selection[tx.id] ?? [])[0] ?? activeCategories[0]?.id
     if (!defaultCategory) {
       setRulesStatusModal('Create a category first.')
+      pushToast('Create a category first.', 'error')
       return
     }
 
@@ -1418,6 +1518,7 @@ function App() {
     const matcherValue = tx.payee ?? tx.purpose ?? ''
     if (!matcherValue.trim()) {
       setRulesStatusModal('No payee available for this transaction.')
+      pushToast('No payee available for this transaction.', 'error')
       return
     }
 
@@ -1431,6 +1532,7 @@ function App() {
     })
     await applyRules()
     setRulesStatusModal('Rule created from payee and applied.')
+    pushToast('Rule created and applied.', 'success')
   }
 
   const saveRuleDraft = async () => {
@@ -1439,6 +1541,7 @@ function App() {
     }
     if (!ruleDraft.matcherValue.trim()) {
       setRulesStatusModal('Enter a value to match before saving the rule.')
+      pushToast('Enter a value to match before saving the rule.', 'error')
       return
     }
 
@@ -1454,6 +1557,7 @@ function App() {
     setRuleDraft(null)
     await applyRules()
     setRulesStatusModal('Custom rule created and applied.')
+    pushToast('Rule created and applied.', 'success')
   }
 
   const applyRules = async () => {
@@ -1471,6 +1575,21 @@ function App() {
       style: 'currency',
       currency: 'EUR',
     }).format(value)
+
+  const formatNetTooltip = (
+    value: number | string,
+    _name: string,
+    item: { payload?: { net?: number } }
+  ) => {
+    const net = item?.payload?.net
+    if (typeof net === 'number') {
+      return formatCurrency(net)
+    }
+    if (typeof value === 'number') {
+      return formatCurrency(value)
+    }
+    return String(value)
+  }
 
   const truncatePurpose = (value: string | null, limit = 100) => {
     if (!value) {
@@ -1506,10 +1625,12 @@ function App() {
 
     if (result.error) {
       setAiStatus(result.error)
+      pushToast(result.error, 'error')
       return
     }
 
     setAiStatus(`AI suggested ${result.applied} transactions.`)
+    pushToast(`AI suggested ${result.applied} transactions.`, 'info')
     loadAiSuggestions(uncategorized.map((tx) => tx.id))
   }
 
@@ -1529,6 +1650,7 @@ function App() {
   const createRule = async () => {
     if (!newRule.matcherValue.trim() || !newRule.categoryId) {
       setRulesStatusModal('Select a category and enter a match value first.')
+      pushToast('Select a category and enter a match value first.', 'error')
       return
     }
 
@@ -1551,6 +1673,7 @@ function App() {
     })
     await applyRules()
     setRulesStatusModal('Rule created and applied.')
+    pushToast('Rule created and applied.', 'success')
     setNewRuleModalOpen(false)
     loadRules()
   }
@@ -1561,18 +1684,40 @@ function App() {
       return
     }
     await window.api.rules.update({ id, ...draft })
+    pushToast('Rule updated.', 'success')
     loadRules()
   }
 
   const removeRule = async (id: number) => {
     await window.api.rules.delete({ id })
+    pushToast('Rule deleted.', 'success')
     loadRules()
   }
 
   return (
     <div className="app-shell">
+      <div className="toast-stack" role="status" aria-live="polite">
+        {toasts.map((toast) => (
+          <div key={toast.id} className={`toast ${toast.tone}`}>
+            <span>{toast.message}</span>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              onClick={() =>
+                setToasts((current) =>
+                  current.filter((item) => item.id !== toast.id)
+                )
+              }
+            >
+              x
+            </button>
+          </div>
+        ))}
+      </div>
       <aside className="sidebar">
-        <div className="brand">Horus</div>
+        <div className="brand">
+          <img className="brand-logo" src="/horus-logo-v2.svg" alt="Horus logo" />
+        </div>
         <nav className="nav">
           <button
             className={activeView === 'dashboard' ? 'active' : ''}
@@ -1740,7 +1885,7 @@ function App() {
                               tick={(props: any) => {
                                 const value = String(props.payload?.value ?? '')
                                 const label =
-                                  value.length > 12 ? `${value.slice(0, 12)}…` : value
+                                  value.length > 12 ? `${value.slice(0, 12)}...` : value
                                 const match = dashboardNetCategories.find(
                                   (row) => row.categoryName === value
                                 )
@@ -1759,7 +1904,7 @@ function App() {
                                       y={0}
                                       dy={16}
                                       textAnchor="middle"
-                                      fill="#bdbdbd"
+                                      fill="#6b7280"
                                     >
                                       {label}
                                     </text>
@@ -1773,18 +1918,21 @@ function App() {
                               }
                             />
                             <Tooltip
-                              formatter={(_value: number, _name, item) => {
-                                const net = (item?.payload as { net?: number })?.net
-                                if (typeof net === 'number') {
-                                  return formatCurrency(net)
-                                }
-                                return formatCurrency(_value)
+                              formatter={(value, _name, item) => {
+                                const normalized = Array.isArray(value)
+                                  ? value[0] ?? ''
+                                  : value ?? ''
+                                return formatNetTooltip(
+                                  normalized,
+                                  String(_name ?? ''),
+                                  item as { payload?: { net?: number } }
+                                )
                               }}
                             />
                             <Bar
                               dataKey="netAbs"
                               name="Net (abs)"
-                              fill="#f2c14e"
+                              fill="#f59e0b"
                               onClick={(data) => {
                                 const payload = (data as { categoryId?: number }) ?? {}
                                 if (payload.categoryId) {
@@ -1795,7 +1943,7 @@ function App() {
                               {dashboardNetCategories.map((entry) => (
                                 <Cell
                                   key={`net-${entry.categoryId}`}
-                                  fill={entry.categoryColor ?? '#f2c14e'}
+                                  fill={entry.categoryColor ?? '#f59e0b'}
                                 />
                               ))}
                             </Bar>
@@ -1922,35 +2070,6 @@ function App() {
         {activeView === 'transactions' && (
           <>
             <div className="card">
-              <button onClick={() => pickFile('dkb')}>Pick DKB CSV</button>
-              <button onClick={() => pickFile('ing')}>Pick ING CSV</button>
-              <button onClick={runImport} disabled={!filePath}>
-                Import
-              </button>
-              <div className="status">
-                <strong>Status:</strong> {status}
-                {filePath && (
-                  <span className="muted">
-                    {' '}
-                    (provider: {importProvider.toUpperCase()})
-                  </span>
-                )}
-              </div>
-              <div className="path">
-                <strong>File:</strong> {filePath ?? 'None'}
-              </div>
-              {warnings.length > 0 && (
-                <div className="warnings">
-                  <strong>Warnings:</strong>
-                  <ul>
-                    {warnings.map((warning, index) => (
-                      <li key={index}>{warning}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-            <div className="card">
               <div className="card-header">
                 <h2>Transactions</h2>
                 <div className="actions">
@@ -1960,6 +2079,9 @@ function App() {
                     value={transactionSearch}
                     onChange={(event) => setTransactionSearch(event.target.value)}
                   />
+                  <button onClick={() => setImportModalOpen(true)}>
+                    Import Transactions
+                  </button>
                   <button onClick={() => setPage(0)} disabled={page === 0}>
                     First
                   </button>
@@ -2034,7 +2156,11 @@ function App() {
                     <span className="page-indicator">Page {uncategorizedPage + 1}</span>
                   <button
                     onClick={() => setUncategorizedPage((p) => p + 1)}
-                    disabled={uncategorized.length < pageSizeUncategorized}
+                    disabled={
+                      uncategorizedTotal === 0 ||
+                      (uncategorizedPage + 1) * pageSizeUncategorized >=
+                        uncategorizedTotal
+                    }
                   >
                     Next
                   </button>
@@ -2047,6 +2173,7 @@ function App() {
                   data={uncategorized}
                   columns={uncategorizedColumns}
                   getRowId={(row) => String(row.id)}
+                  totalCount={uncategorizedTotal}
                   emptyMessage="All transactions are categorized."
                 />
               </>
@@ -2074,18 +2201,18 @@ function App() {
                       styles={{
                         control: (base, state) => ({
                           ...base,
-                          backgroundColor: '#101010',
-                          borderColor: state.isFocused ? '#2b4cff' : '#2a2a2a',
+                          backgroundColor: '#ffffff',
+                          borderColor: state.isFocused ? '#2563eb' : '#d1d5db',
                           boxShadow: state.isFocused
-                            ? '0 0 0 1px #2b4cff'
+                            ? '0 0 0 1px #2563eb'
                             : 'none',
                           minHeight: 34,
                         }),
                         menu: (base) => ({
                           ...base,
-                          backgroundColor: '#141414',
-                          border: '1px solid #2a2a2a',
-                          color: '#f0f0f0',
+                          backgroundColor: '#ffffff',
+                          border: '1px solid #e5e7eb',
+                          color: '#1f2937',
                         }),
                         menuPortal: (base) => ({
                           ...base,
@@ -2094,27 +2221,27 @@ function App() {
                         option: (base, state) => ({
                           ...base,
                           backgroundColor: state.isSelected
-                            ? '#2b4cff'
+                            ? '#2563eb'
                             : state.isFocused
-                            ? '#1f2338'
-                            : '#141414',
-                          color: '#f0f0f0',
+                            ? '#eef2ff'
+                            : '#ffffff',
+                          color: state.isSelected ? '#ffffff' : '#1f2937',
                         }),
-                        singleValue: (base) => ({ ...base, color: '#f0f0f0' }),
-                        placeholder: (base) => ({ ...base, color: '#bdbdbd' }),
-                        input: (base) => ({ ...base, color: '#f0f0f0' }),
+                        singleValue: (base) => ({ ...base, color: '#1f2937' }),
+                        placeholder: (base) => ({ ...base, color: '#6b7280' }),
+                        input: (base) => ({ ...base, color: '#1f2937' }),
                         multiValue: (base) => ({
                           ...base,
-                          backgroundColor: '#1b1f33',
-                          border: '1px solid #2b4cff',
+                          backgroundColor: '#eef2ff',
+                          border: '1px solid #2563eb',
                         }),
                         multiValueLabel: (base) => ({
                           ...base,
-                          color: '#e6e9ff',
+                          color: '#1f2937',
                         }),
                         multiValueRemove: (base) => ({
                           ...base,
-                          color: '#cbd3ff',
+                          color: '#2563eb',
                         }),
                       }}
                     />
@@ -2453,7 +2580,6 @@ function App() {
             </div>
           </div>
         )}
-      </div>
       {ruleDraft && (
         <div className="modal-backdrop">
           <div className="modal">
@@ -2718,11 +2844,87 @@ function App() {
           </div>
         </div>
       )}
+      {importModalOpen && (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div className="modal-header">
+              <h3>Import Transactions</h3>
+              <button onClick={closeImportModal}>Close</button>
+            </div>
+            <div className="modal-body">
+              <label>
+                Provider
+                <select
+                  value={importProvider}
+                  onChange={(event) =>
+                    setImportProvider(event.target.value as 'dkb' | 'ing')
+                  }
+                >
+                  <option value="dkb">DKB</option>
+                  <option value="ing">ING</option>
+                </select>
+              </label>
+              <div className="actions">
+                <button onClick={() => pickFile(importProvider)}>
+                  Pick CSV
+                </button>
+                <button onClick={runImport} disabled={!filePath}>
+                  Import
+                </button>
+              </div>
+              <div className="status">
+                <strong>Status:</strong> {status}
+                {filePath && (
+                  <span className="muted">
+                    {' '}
+                    (provider: {importProvider.toUpperCase()})
+                  </span>
+                )}
+              </div>
+              <div className="path">
+                <strong>File:</strong> {filePath ?? 'None'}
+              </div>
+              {warnings.length > 0 && (
+                <div className="warnings">
+                  <strong>Warnings:</strong>
+                  <ul>
+                    {warnings.map((warning, index) => (
+                      <li key={index}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button onClick={closeImportModal}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmDialog && (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div className="modal-header">
+              <h3>Confirm</h3>
+              <button onClick={() => setConfirmDialog(null)}>Close</button>
+            </div>
+            <div className="modal-body">
+              <p>{confirmDialog.message}</p>
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setConfirmDialog(null)}>Cancel</button>
+              <button onClick={confirmDialog.onConfirm}>Remove</button>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
     </div>
   )
 }
 
 export default App
+
 
 
 
