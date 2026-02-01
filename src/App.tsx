@@ -5,10 +5,8 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Customized,
   Cell,
-  LabelList,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -46,6 +44,7 @@ type CategorizedViewRow = TransactionRow & {
 type RuleDraft = {
   txId: number
   matcherType: 'payee' | 'purpose' | 'iban' | 'bic' | 'amount' | 'direction'
+  matcherOperator: 'contains' | 'equals'
   matcherValue: string
   categoryId: number
   priority: number
@@ -82,16 +81,54 @@ type CategoryTableMeta = {
   deleteCategoryRow: (id: number) => void
 }
 
+type RuleTableMeta = {
+  ruleEdits: Record<
+    number,
+    {
+      matcherType: string
+      matcherOperator: string
+      matcherValue: string
+      categoryId: number
+      priority: number
+      isActive: number
+    }
+  >
+  setRuleEdits: React.Dispatch<
+    React.SetStateAction<
+      Record<
+        number,
+        {
+          matcherType: string
+          matcherOperator: string
+          matcherValue: string
+          categoryId: number
+          priority: number
+          isActive: number
+        }
+      >
+    >
+  >
+  activeCategories: CategoryRow[]
+  saveRule: (id: number) => void
+  deleteRule: (id: number) => void
+}
+
 function App() {
   const [filePath, setFilePath] = useState<string | null>(null)
+  const [importProvider, setImportProvider] = useState<'dkb' | 'ing'>('dkb')
   const [status, setStatus] = useState<string>('Idle')
   const [warnings, setWarnings] = useState<string[]>([])
   const [transactions, setTransactions] = useState<TransactionRow[]>([])
+  const [transactionsTotal, setTransactionsTotal] = useState(0)
+  const [transactionSearch, setTransactionSearch] = useState('')
   const [uncategorized, setUncategorized] = useState<TransactionRow[]>([])
   const [categorized, setCategorized] = useState<CategorizedViewRow[]>([])
   const [categorizedTotal, setCategorizedTotal] = useState(0)
   const [loadingTransactions, setLoadingTransactions] = useState(false)
   const [categories, setCategories] = useState<CategoryRow[]>([])
+  const [categoriesTotal, setCategoriesTotal] = useState(0)
+  const [categorySearch, setCategorySearch] = useState('')
+  const [categoriesAll, setCategoriesAll] = useState<CategoryRow[]>([])
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newCategoryColor, setNewCategoryColor] = useState('#4c7cff')
   const [categoryStatus, setCategoryStatus] = useState<string>('')
@@ -123,15 +160,14 @@ function App() {
   const [dashboardCategoryPage, setDashboardCategoryPage] = useState(0)
   const [pageSizeCategories, setPageSizeCategories] = useState(16)
   const [pageSizeRules, setPageSizeRules] = useState(16)
-  const [pageSizeDashboardCategories, setPageSizeDashboardCategories] =
-    useState(8)
+  const [pageSizeDashboardTransactions, setPageSizeDashboardTransactions] =
+    useState(7)
   const [selection, setSelection] = useState<Record<number, number[]>>({})
   const [categorizedFilter, setCategorizedFilter] = useState<number[]>([])
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null)
   const [rulesStatus, setRulesStatus] = useState<string>('')
   const [rulesStatusModal, setRulesStatusModal] = useState<string | null>(null)
   const [newRuleModalOpen, setNewRuleModalOpen] = useState(false)
-  const [ruleMenuOpen, setRuleMenuOpen] = useState<Record<number, boolean>>({})
   const [aiSuggestions, setAiSuggestions] = useState<
     Record<
       number,
@@ -166,17 +202,21 @@ function App() {
     Array<{
       id: number
       matcherType: string
+      matcherOperator: string
       matcherValue: string
       categoryId: number
       priority: number
       isActive: number
     }>
   >([])
+  const [rulesTotal, setRulesTotal] = useState(0)
+  const [ruleSearch, setRuleSearch] = useState('')
   const [ruleEdits, setRuleEdits] = useState<
     Record<
       number,
       {
         matcherType: string
+        matcherOperator: string
         matcherValue: string
         categoryId: number
         priority: number
@@ -186,6 +226,7 @@ function App() {
   >({})
   const [newRule, setNewRule] = useState({
     matcherType: 'payee' as RuleDraft['matcherType'],
+    matcherOperator: 'contains' as RuleDraft['matcherOperator'],
     matcherValue: '',
     categoryId: 0,
     priority: 100,
@@ -210,49 +251,52 @@ function App() {
       categoryId: number
       categoryName: string
       totalSpend: number
+      totalIncome: number
       transactionCount: number
       categoryColor: string | null
     }>
   >([])
-  const [dashboardTrend, setDashboardTrend] = useState<
-    Array<{
-      month: string
-      totalSpend: number
-      totalIncome: number
-      net: number
-    }>
-  >([])
+  const [dashboardCategorySelectionId, setDashboardCategorySelectionId] =
+    useState<number | null>(null)
+  const [dashboardCategoryTransactions, setDashboardCategoryTransactions] =
+    useState<
+      Array<{
+        id: number
+        bookingDate: string
+        amount: number
+        currency: string
+        payee: string | null
+        purpose: string | null
+      }>
+    >([])
+  const [dashboardCategoryTransactionsTotal, setDashboardCategoryTransactionsTotal] =
+    useState(0)
+  const dashboardNetCategories = useMemo(() => {
+    const mapped = dashboardCategories
+      .map((row) => ({
+        ...row,
+        net: row.totalIncome - row.totalSpend,
+      }))
+      .filter((row) => row.net < 0)
+    const withAbs = mapped.map((row) => ({
+      ...row,
+      netAbs: Math.abs(row.net),
+    }))
+    withAbs.sort((a, b) => b.netAbs - a.netAbs)
+    return withAbs
+  }, [dashboardCategories])
 
-  const dashboardSpendCategories = useMemo(
-    () => dashboardCategories.filter((row) => row.totalSpend > 0),
-    [dashboardCategories]
+  const selectedDashboardCategory = useMemo(
+    () =>
+      dashboardNetCategories.find(
+        (row) => row.categoryId === dashboardCategorySelectionId
+      ),
+    [dashboardNetCategories, dashboardCategorySelectionId]
   )
 
-  const pagedCategories = useMemo(() => {
-    const start = categoriesPage * pageSizeCategories
-    return categories.slice(start, start + pageSizeCategories)
-  }, [categories, categoriesPage, pageSizeCategories])
-
-  const pagedRules = useMemo(() => {
-    const start = rulesPage * pageSizeRules
-    return rules.slice(start, start + pageSizeRules)
-  }, [rules, rulesPage, pageSizeRules])
-
-  const pagedDashboardCategories = useMemo(() => {
-    const start = dashboardCategoryPage * pageSizeDashboardCategories
-    return dashboardSpendCategories.slice(
-      start,
-      start + pageSizeDashboardCategories
-    )
-  }, [
-    dashboardSpendCategories,
-    dashboardCategoryPage,
-    pageSizeDashboardCategories,
-  ])
-
   const activeCategories = useMemo(
-    () => categories.filter((cat) => cat.isActive === 1),
-    [categories]
+    () => categoriesAll.filter((cat) => cat.isActive === 1),
+    [categoriesAll]
   )
 
   const categoryOptions = useMemo<CategoryOption[]>(
@@ -266,11 +310,11 @@ function App() {
 
   const categoryFilterOptions = useMemo<CategoryOption[]>(
     () =>
-      categories.map((cat) => ({
+      categoriesAll.map((cat) => ({
         value: cat.id,
         label: cat.name,
       })),
-    [categories]
+    [categoriesAll]
   )
 
   const transactionColumns = useMemo<ColumnDef<TransactionRow>[]>(
@@ -285,7 +329,7 @@ function App() {
         header: 'Purpose',
         accessorKey: 'purpose',
         cell: ({ row }) => (
-          <span className="purpose">{row.original.purpose ?? '-'}</span>
+          <span className="purpose">{truncatePurpose(row.original.purpose, 100)}</span>
         ),
       },
       {
@@ -313,7 +357,7 @@ function App() {
         header: 'Purpose',
         accessorKey: 'purpose',
         cell: ({ row }) => (
-          <span className="purpose">{row.original.purpose ?? '-'}</span>
+          <span className="purpose">{truncatePurpose(row.original.purpose, 100)}</span>
         ),
       },
       {
@@ -419,39 +463,29 @@ function App() {
         id: 'rule',
         header: '',
         cell: ({ row }) => (
-          <div className="dropdown">
-            <div className="dropdown-split">
-              <button
-                className="dropdown-main"
-                onClick={() => createRuleFromPayee(row.original)}
-                disabled={(selection[row.original.id] ?? []).length === 0}
-              >
-                Create Rule
-              </button>
-              <button
-                className="dropdown-toggle"
-                onClick={() =>
-                  setRuleMenuOpen((current) => ({
-                    ...current,
-                    [row.original.id]: !current[row.original.id],
-                  }))
-                }
-                disabled={(selection[row.original.id] ?? []).length === 0}
-                aria-label="Open rule options"
-              >
-                ▾
-              </button>
-            </div>
-            {ruleMenuOpen[row.original.id] && (
-              <div className="dropdown-menu">
-                <button onClick={() => createRuleFromPayee(row.original)}>
-                  Create Rule
-                </button>
-                <button onClick={() => openRuleDraft(row.original)}>
-                  Custom
-                </button>
-              </div>
-            )}
+          <div className="rule-actions">
+            <button
+              className="rule-action rule-action-quick"
+              onClick={() => createRuleFromPayee(row.original)}
+              disabled={(selection[row.original.id] ?? []).length === 0}
+            >
+              <span className="rule-icon rule-icon-quick" aria-hidden="true" />
+              <span className="rule-action-text">
+                <strong>Quick rule</strong>
+                <span className="rule-action-sub">From payee</span>
+              </span>
+            </button>
+            <button
+              className="rule-action rule-action-custom"
+              onClick={() => openRuleDraft(row.original)}
+              disabled={categoryOptions.length === 0}
+            >
+              <span className="rule-icon rule-icon-custom" aria-hidden="true" />
+              <span className="rule-action-text">
+                <strong>Custom rule</strong>
+                <span className="rule-action-sub">Pick field</span>
+              </span>
+            </button>
           </div>
         ),
       },
@@ -497,7 +531,7 @@ function App() {
         header: 'Purpose',
         accessorKey: 'purpose',
         cell: ({ row }) => (
-          <span className="purpose">{row.original.purpose ?? '-'}</span>
+          <span className="purpose">{truncatePurpose(row.original.purpose, 100)}</span>
         ),
       },
       {
@@ -640,13 +674,17 @@ function App() {
       {
         header: 'Field',
         accessorKey: 'matcherType',
-        cell: ({ row }) => {
-          const draft = ruleEdits[row.original.id] ?? row.original
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as RuleTableMeta
+          if (!meta) {
+            return null
+          }
+          const draft = meta.ruleEdits[row.original.id] ?? row.original
           return (
             <select
               value={draft.matcherType}
               onChange={(event) =>
-                setRuleEdits((current) => ({
+                meta.setRuleEdits((current) => ({
                   ...current,
                   [row.original.id]: {
                     ...draft,
@@ -666,16 +704,48 @@ function App() {
         },
       },
       {
+        header: 'Match',
+        accessorKey: 'matcherOperator',
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as RuleTableMeta
+          if (!meta) {
+            return null
+          }
+          const draft = meta.ruleEdits[row.original.id] ?? row.original
+          return (
+            <select
+              value={draft.matcherOperator ?? 'contains'}
+              onChange={(event) =>
+                meta.setRuleEdits((current) => ({
+                  ...current,
+                  [row.original.id]: {
+                    ...draft,
+                    matcherOperator: event.target.value,
+                  },
+                }))
+              }
+            >
+              <option value="contains">Contains</option>
+              <option value="equals">Equals</option>
+            </select>
+          )
+        },
+      },
+      {
         header: 'Value',
         accessorKey: 'matcherValue',
-        cell: ({ row }) => {
-          const draft = ruleEdits[row.original.id] ?? row.original
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as RuleTableMeta
+          if (!meta) {
+            return null
+          }
+          const draft = meta.ruleEdits[row.original.id] ?? row.original
           return (
             <input
               type="text"
               value={draft.matcherValue}
               onChange={(event) =>
-                setRuleEdits((current) => ({
+                meta.setRuleEdits((current) => ({
                   ...current,
                   [row.original.id]: {
                     ...draft,
@@ -690,13 +760,17 @@ function App() {
       {
         header: 'Category',
         accessorKey: 'categoryId',
-        cell: ({ row }) => {
-          const draft = ruleEdits[row.original.id] ?? row.original
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as RuleTableMeta
+          if (!meta) {
+            return null
+          }
+          const draft = meta.ruleEdits[row.original.id] ?? row.original
           return (
             <select
               value={draft.categoryId}
               onChange={(event) =>
-                setRuleEdits((current) => ({
+                meta.setRuleEdits((current) => ({
                   ...current,
                   [row.original.id]: {
                     ...draft,
@@ -705,7 +779,7 @@ function App() {
                 }))
               }
             >
-              {activeCategories.map((cat) => (
+              {meta.activeCategories.map((cat) => (
                 <option key={cat.id} value={cat.id}>
                   {cat.name}
                 </option>
@@ -717,15 +791,19 @@ function App() {
       {
         header: 'Priority',
         accessorKey: 'priority',
-        cell: ({ row }) => {
-          const draft = ruleEdits[row.original.id] ?? row.original
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as RuleTableMeta
+          if (!meta) {
+            return null
+          }
+          const draft = meta.ruleEdits[row.original.id] ?? row.original
           return (
             <input
               type="number"
               value={draft.priority}
               min={0}
               onChange={(event) =>
-                setRuleEdits((current) => ({
+                meta.setRuleEdits((current) => ({
                   ...current,
                   [row.original.id]: {
                     ...draft,
@@ -740,15 +818,19 @@ function App() {
       {
         header: 'Status',
         id: 'status',
-        cell: ({ row }) => {
-          const draft = ruleEdits[row.original.id] ?? row.original
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as RuleTableMeta
+          if (!meta) {
+            return null
+          }
+          const draft = meta.ruleEdits[row.original.id] ?? row.original
           return (
             <label className="toggle">
               <input
                 type="checkbox"
                 checked={draft.isActive === 1}
                 onChange={(event) =>
-                  setRuleEdits((current) => ({
+                  meta.setRuleEdits((current) => ({
                     ...current,
                     [row.original.id]: {
                       ...draft,
@@ -765,24 +847,43 @@ function App() {
       {
         header: '',
         id: 'actions',
-        cell: ({ row }) => (
-          <div className="rule-actions">
-            <button onClick={() => updateRule(row.original.id)}>Save</button>
-            <button onClick={() => removeRule(row.original.id)}>Delete</button>
-          </div>
-        ),
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as RuleTableMeta
+          if (!meta) {
+            return null
+          }
+          const draft = meta.ruleEdits[row.original.id]
+          const hasChanges =
+            draft &&
+            (draft.matcherType !== row.original.matcherType ||
+              draft.matcherOperator !== row.original.matcherOperator ||
+              draft.matcherValue !== row.original.matcherValue ||
+              draft.categoryId !== row.original.categoryId ||
+              draft.priority !== row.original.priority ||
+              draft.isActive !== row.original.isActive)
+          return (
+            <div className="rule-actions">
+              <button onClick={() => meta.saveRule(row.original.id)} disabled={!hasChanges}>
+                Save
+              </button>
+              <button onClick={() => meta.deleteRule(row.original.id)}>Delete</button>
+            </div>
+          )
+        },
       },
     ],
-    [activeCategories, ruleEdits]
+    []
   )
 
   const loadTransactions = async () => {
     setLoadingTransactions(true)
-    const rows = await window.api.transactions.list({
+    const result = await window.api.transactions.list({
       limit: pageSizeTransactions,
       offset: page * pageSizeTransactions,
+      search: transactionSearch || undefined,
     })
-    setTransactions(rows)
+    setTransactions(result.rows)
+    setTransactionsTotal(result.total)
     setLoadingTransactions(false)
   }
 
@@ -824,14 +925,32 @@ function App() {
   }
 
   const loadCategories = async () => {
-    const rows = await window.api.categories.list()
-    setCategories(rows)
+    const result = await window.api.categories.list({
+      limit: pageSizeCategories,
+      offset: categoriesPage * pageSizeCategories,
+      search: categorySearch || undefined,
+    })
+    setCategories(result.rows)
+    setCategoriesTotal(result.total)
     setCategoryEdits({})
   }
 
+  const loadCategoriesAll = async () => {
+    const result = await window.api.categories.list({
+      limit: 10000,
+      offset: 0,
+    })
+    setCategoriesAll(result.rows)
+  }
+
   const loadRules = async () => {
-    const rows = await window.api.rules.list()
-    setRules(rows)
+    const result = await window.api.rules.list({
+      limit: pageSizeRules,
+      offset: rulesPage * pageSizeRules,
+      search: ruleSearch || undefined,
+    })
+    setRules(result.rows)
+    setRulesTotal(result.total)
     setRuleEdits({})
   }
 
@@ -916,14 +1035,12 @@ function App() {
       if (!dashboardMonth) {
         return
       }
-      const [summary, categories, trend] = await Promise.all([
+      const [summary, categories] = await Promise.all([
         window.api.dashboard.summary({ month: dashboardMonth }),
         window.api.dashboard.categories({ month: dashboardMonth }),
-        window.api.dashboard.trend({ months: 6 }),
       ])
       setDashboardSummary(summary)
       setDashboardCategories(categories)
-      setDashboardTrend([...trend].reverse())
       return
     }
 
@@ -932,7 +1049,7 @@ function App() {
       return
     }
 
-    const [summary, categories, trend] = await Promise.all([
+    const [summary, categories] = await Promise.all([
       window.api.dashboard.summaryRange({
         startMonth: bounds.startMonth,
         endMonth: bounds.endMonth,
@@ -941,11 +1058,72 @@ function App() {
         startMonth: bounds.startMonth,
         endMonth: bounds.endMonth,
       }),
-      window.api.dashboard.trend({ months: bounds.monthsBack }),
     ])
     setDashboardSummary(summary)
     setDashboardCategories(categories)
-    setDashboardTrend([...trend].reverse())
+  }
+
+  const loadDashboardCategoryTransactions = async () => {
+    if (!dashboardCategorySelectionId) {
+      setDashboardCategoryTransactions([])
+      setDashboardCategoryTransactionsTotal(0)
+      return
+    }
+
+    const result = await window.api.transactions.listCategorized({
+      limit: pageSizeDashboardTransactions,
+      offset: dashboardCategoryPage * pageSizeDashboardTransactions,
+      categoryIds: [dashboardCategorySelectionId],
+    })
+
+    setDashboardCategoryTransactions(result.rows)
+    setDashboardCategoryTransactionsTotal(result.total)
+  }
+
+  const handleDashboardCategorySelect = (categoryId: number) => {
+    setDashboardCategorySelectionId(categoryId)
+    setDashboardCategoryPage(0)
+  }
+
+  const renderDashboardCategoryClickLayer = (props: any) => {
+    const xAxis = Object.values(props?.xAxisMap ?? {})[0] as any
+    const offset = props?.offset as
+      | { top: number; height: number }
+      | undefined
+    const data = Array.isArray(props?.data) ? props.data : []
+
+    if (!xAxis?.scale?.bandwidth || !offset) {
+      return null
+    }
+
+    const bandWidth = xAxis.scale.bandwidth()
+
+    return (
+      <g>
+        {data.map((entry: { categoryId?: number; categoryName?: string }, index: number) => {
+          if (!entry?.categoryName || !entry?.categoryId) {
+            return null
+          }
+          const x = xAxis.scale(entry.categoryName)
+          if (x == null) {
+            return null
+          }
+          return (
+            <rect
+              key={`${entry.categoryId}-${index}`}
+              x={x}
+              y={offset.top}
+              width={bandWidth}
+              height={offset.height}
+              fill="transparent"
+              pointerEvents="all"
+              style={{ cursor: 'pointer' }}
+              onClick={() => handleDashboardCategorySelect(entry.categoryId as number)}
+            />
+          )
+        })}
+      </g>
+    )
   }
 
   useEffect(() => {
@@ -953,6 +1131,7 @@ function App() {
     loadUncategorized()
     loadCategorized()
     loadCategories()
+    loadCategoriesAll()
     loadRules()
     loadAiSettings()
     loadDashboardMonths()
@@ -971,6 +1150,31 @@ function App() {
   }, [dashboardRange, dashboardMonths])
 
   useEffect(() => {
+    if (dashboardNetCategories.length === 0) {
+      setDashboardCategorySelectionId(null)
+      return
+    }
+    setDashboardCategorySelectionId((current) => {
+      if (
+        current &&
+        dashboardNetCategories.some((row) => row.categoryId === current)
+      ) {
+        return current
+      }
+      return dashboardNetCategories[0].categoryId
+    })
+    setDashboardCategoryPage(0)
+  }, [dashboardNetCategories])
+
+  useEffect(() => {
+    loadDashboardCategoryTransactions()
+  }, [
+    dashboardCategorySelectionId,
+    dashboardCategoryPage,
+    pageSizeDashboardTransactions,
+  ])
+
+  useEffect(() => {
     if (activeCategories.length > 0 && newRule.categoryId === 0) {
       setNewRule((current) => ({
         ...current,
@@ -980,8 +1184,12 @@ function App() {
   }, [activeCategories, newRule.categoryId])
 
   useEffect(() => {
+    setPage(0)
+  }, [transactionSearch])
+
+  useEffect(() => {
     loadTransactions()
-  }, [page, pageSizeTransactions])
+  }, [page, pageSizeTransactions, transactionSearch])
 
   useEffect(() => {
     loadUncategorized()
@@ -996,30 +1204,51 @@ function App() {
   }, [categorizedFilter])
 
   useEffect(() => {
-    const maxPage = Math.max(0, Math.ceil(categories.length / pageSizeCategories) - 1)
-    if (categoriesPage > maxPage) {
-      setCategoriesPage(maxPage)
-    }
-  }, [categories.length, pageSizeCategories, categoriesPage])
+    setCategoriesPage(0)
+  }, [categorySearch])
 
   useEffect(() => {
-    const maxPage = Math.max(0, Math.ceil(rules.length / pageSizeRules) - 1)
-    if (rulesPage > maxPage) {
-      setRulesPage(maxPage)
-    }
-  }, [rules.length, pageSizeRules, rulesPage])
+    loadCategories()
+  }, [categoriesPage, pageSizeCategories, categorySearch])
 
   useEffect(() => {
     const maxPage = Math.max(
       0,
-      Math.ceil(dashboardSpendCategories.length / pageSizeDashboardCategories) - 1
+      Math.ceil(categoriesTotal / pageSizeCategories) - 1
+    )
+    if (categoriesPage > maxPage) {
+      setCategoriesPage(maxPage)
+    }
+  }, [categoriesTotal, pageSizeCategories, categoriesPage])
+
+  useEffect(() => {
+    loadRules()
+  }, [rulesPage, pageSizeRules, ruleSearch])
+
+  useEffect(() => {
+    setRulesPage(0)
+  }, [ruleSearch])
+
+  useEffect(() => {
+    const maxPage = Math.max(0, Math.ceil(rulesTotal / pageSizeRules) - 1)
+    if (rulesPage > maxPage) {
+      setRulesPage(maxPage)
+    }
+  }, [rulesTotal, pageSizeRules, rulesPage])
+
+  useEffect(() => {
+    const maxPage = Math.max(
+      0,
+      Math.ceil(
+        dashboardCategoryTransactionsTotal / pageSizeDashboardTransactions
+      ) - 1
     )
     if (dashboardCategoryPage > maxPage) {
       setDashboardCategoryPage(maxPage)
     }
   }, [
-    dashboardSpendCategories.length,
-    pageSizeDashboardCategories,
+    dashboardCategoryTransactionsTotal,
+    pageSizeDashboardTransactions,
     dashboardCategoryPage,
   ])
 
@@ -1050,10 +1279,11 @@ function App() {
     return () => window.removeEventListener('resize', updatePageSizes)
   }, [])
 
-  const pickFile = async () => {
-    const selected = await window.api.import.pickFile()
+  const pickFile = async (provider: 'dkb' | 'ing') => {
+    const selected = await window.api.import.pickFile(provider)
     if (selected) {
       setFilePath(selected)
+      setImportProvider(provider)
       setStatus('File selected.')
       setWarnings([])
     }
@@ -1065,7 +1295,10 @@ function App() {
       return
     }
     setStatus('Importing...')
-    const result = await window.api.import.dkb(filePath)
+    const result =
+      importProvider === 'ing'
+        ? await window.api.import.ing(filePath)
+        : await window.api.import.dkb(filePath)
     if (result.success) {
       setStatus(`Imported ${result.inserted} rows (skipped ${result.skipped}).`)
       loadTransactions()
@@ -1100,6 +1333,7 @@ function App() {
     setNewCategoryColor('#4c7cff')
     setNewCategoryModalOpen(false)
     loadCategories()
+    loadCategoriesAll()
   }
 
   const saveCategory = async (id: number) => {
@@ -1115,6 +1349,7 @@ function App() {
     })
     setCategoryStatus('Category saved.')
     loadCategories()
+    loadCategoriesAll()
   }
 
   const deleteCategoryRow = async (id: number) => {
@@ -1127,6 +1362,7 @@ function App() {
       setCategoryStatus('Category could not be deleted.')
     }
     loadCategories()
+    loadCategoriesAll()
   }
 
   const assignCategory = async (transactionId: number) => {
@@ -1156,20 +1392,22 @@ function App() {
   }
 
   const openRuleDraft = (tx: TransactionRow) => {
-    const defaultCategory = (selection[tx.id] ?? [])[0]
+    const defaultCategory =
+      (selection[tx.id] ?? [])[0] ?? activeCategories[0]?.id
     if (!defaultCategory) {
+      setRulesStatusModal('Create a category first.')
       return
     }
 
     setRuleDraft({
       txId: tx.id,
       matcherType: 'payee',
+      matcherOperator: 'contains',
       matcherValue: tx.payee ?? tx.purpose ?? '',
       categoryId: defaultCategory,
       priority: 100,
       isActive: 1,
     })
-    setRuleMenuOpen((current) => ({ ...current, [tx.id]: false }))
   }
 
   const createRuleFromPayee = async (tx: TransactionRow) => {
@@ -1185,23 +1423,28 @@ function App() {
 
     await window.api.rules.create({
       matcherType: 'payee',
+      matcherOperator: 'contains',
       matcherValue: matcherValue.trim(),
       categoryId: defaultCategory,
       priority: 100,
       isActive: 1,
     })
     await applyRules()
-    setRuleMenuOpen((current) => ({ ...current, [tx.id]: false }))
     setRulesStatusModal('Rule created from payee and applied.')
   }
 
   const saveRuleDraft = async () => {
-    if (!ruleDraft || !ruleDraft.matcherValue.trim()) {
+    if (!ruleDraft) {
+      return
+    }
+    if (!ruleDraft.matcherValue.trim()) {
+      setRulesStatusModal('Enter a value to match before saving the rule.')
       return
     }
 
     await window.api.rules.create({
       matcherType: ruleDraft.matcherType,
+      matcherOperator: ruleDraft.matcherOperator,
       matcherValue: ruleDraft.matcherValue.trim(),
       categoryId: ruleDraft.categoryId,
       priority: ruleDraft.priority,
@@ -1210,6 +1453,7 @@ function App() {
 
     setRuleDraft(null)
     await applyRules()
+    setRulesStatusModal('Custom rule created and applied.')
   }
 
   const applyRules = async () => {
@@ -1227,6 +1471,13 @@ function App() {
       style: 'currency',
       currency: 'EUR',
     }).format(value)
+
+  const truncatePurpose = (value: string | null, limit = 100) => {
+    if (!value) {
+      return '-'
+    }
+    return value.length > limit ? `${value.slice(0, limit - 3)}...` : value
+  }
 
   const formatCompactCurrency = (value: number) =>
     new Intl.NumberFormat('de-DE', {
@@ -1283,6 +1534,7 @@ function App() {
 
     await window.api.rules.create({
       matcherType: newRule.matcherType,
+      matcherOperator: newRule.matcherOperator,
       matcherValue: newRule.matcherValue.trim(),
       categoryId: newRule.categoryId,
       priority: newRule.priority,
@@ -1291,6 +1543,7 @@ function App() {
 
     setNewRule({
       matcherType: newRule.matcherType,
+      matcherOperator: newRule.matcherOperator,
       matcherValue: '',
       categoryId: newRule.categoryId,
       priority: newRule.priority,
@@ -1328,16 +1581,16 @@ function App() {
             Dashboard
           </button>
           <button
-            className={activeView === 'transactions' ? 'active' : ''}
-            onClick={() => setActiveView('transactions')}
-          >
-            Transactions
-          </button>
-          <button
             className={activeView === 'categorization' ? 'active' : ''}
             onClick={() => setActiveView('categorization')}
           >
             Categorization
+          </button>
+          <button
+            className={activeView === 'categories' ? 'active' : ''}
+            onClick={() => setActiveView('categories')}
+          >
+            Categories
           </button>
           <button
             className={activeView === 'rules' ? 'active' : ''}
@@ -1346,16 +1599,16 @@ function App() {
             Rules
           </button>
           <button
+            className={activeView === 'transactions' ? 'active' : ''}
+            onClick={() => setActiveView('transactions')}
+          >
+            Transactions
+          </button>
+          <button
             className={activeView === 'ai' ? 'active' : ''}
             onClick={() => setActiveView('ai')}
           >
             AI Settings
-          </button>
-          <button
-            className={activeView === 'categories' ? 'active' : ''}
-            onClick={() => setActiveView('categories')}
-          >
-            Categories
           </button>
         </nav>
       </aside>
@@ -1444,17 +1697,39 @@ function App() {
                     </button>
                   </div>
                 </div>
-                <div className="chart-grid">
-                  <div className="chart-card">
-                    <div className="card-header">
-                      <h3>Spend by category</h3>
-                    </div>
-                    {dashboardSpendCategories.length === 0 ? (
-                      <div className="muted">No categorized spend yet.</div>
-                    ) : (
-                      <div className="chart">
+                <div className="chart-card">
+                  <div className="card-header">
+                    <h3>NET SPENDING BY CATEGORY</h3>
+                  </div>
+                  {dashboardNetCategories.length === 0 ? (
+                    <div className="muted">No negative net categories.</div>
+                  ) : (
+                    <div className="chart-scroll">
+                      <div
+                        className="chart"
+                        style={{
+                          width: Math.max(
+                            520,
+                            dashboardNetCategories.length * 120
+                          ),
+                        }}
+                      >
                         <ResponsiveContainer width="100%" height={260}>
-                          <BarChart data={dashboardSpendCategories}>
+                          <BarChart
+                            data={dashboardNetCategories}
+                            onClick={(state) => {
+                              const label = (state as { activeLabel?: string })?.activeLabel
+                              if (!label) {
+                                return
+                              }
+                              const match = dashboardNetCategories.find(
+                                (row) => row.categoryName === label
+                              )
+                              if (match) {
+                                handleDashboardCategorySelect(match.categoryId)
+                              }
+                            }}
+                          >
                             <CartesianGrid strokeDasharray="3 3" />
                             <XAxis
                               dataKey="categoryName"
@@ -1462,77 +1737,113 @@ function App() {
                               angle={0}
                               textAnchor="middle"
                               height={40}
-                              tickFormatter={(value: string) =>
-                                value.length > 12 ? `${value.slice(0, 12)}…` : value
+                              tick={(props: any) => {
+                                const value = String(props.payload?.value ?? '')
+                                const label =
+                                  value.length > 12 ? `${value.slice(0, 12)}…` : value
+                                const match = dashboardNetCategories.find(
+                                  (row) => row.categoryName === value
+                                )
+                                return (
+                                  <g
+                                    transform={`translate(${props.x},${props.y})`}
+                                    onClick={() => {
+                                      if (match) {
+                                        handleDashboardCategorySelect(match.categoryId)
+                                      }
+                                    }}
+                                    style={{ cursor: match ? 'pointer' : 'default' }}
+                                  >
+                                    <text
+                                      x={0}
+                                      y={0}
+                                      dy={16}
+                                      textAnchor="middle"
+                                      fill="#bdbdbd"
+                                    >
+                                      {label}
+                                    </text>
+                                  </g>
+                                )
+                              }}
+                            />
+                            <YAxis
+                              tickFormatter={(value: number) =>
+                                formatCompactCurrency(value)
                               }
                             />
-                            <YAxis />
                             <Tooltip
-                              formatter={(value: number) => formatCurrency(value)}
+                              formatter={(_value: number, _name, item) => {
+                                const net = (item?.payload as { net?: number })?.net
+                                if (typeof net === 'number') {
+                                  return formatCurrency(net)
+                                }
+                                return formatCurrency(_value)
+                              }}
                             />
-                            <Bar dataKey="totalSpend" fill="#2b4cff">
-                              {dashboardSpendCategories.map((entry) => (
+                            <Bar
+                              dataKey="netAbs"
+                              name="Net (abs)"
+                              fill="#f2c14e"
+                              onClick={(data) => {
+                                const payload = (data as { categoryId?: number }) ?? {}
+                                if (payload.categoryId) {
+                                  handleDashboardCategorySelect(payload.categoryId)
+                                }
+                              }}
+                            >
+                              {dashboardNetCategories.map((entry) => (
                                 <Cell
-                                  key={`bar-${entry.categoryId}`}
-                                  fill={entry.categoryColor ?? '#2b4cff'}
+                                  key={`net-${entry.categoryId}`}
+                                  fill={entry.categoryColor ?? '#f2c14e'}
                                 />
                               ))}
-                              <LabelList
-                                dataKey="totalSpend"
-                                position="top"
-                                fill="#f0f0f0"
-                                formatter={(value: number, entry: any, index: number) =>
-                                  index < 10
-                                    ? `${entry.categoryName} ${formatCompactCurrency(
-                                        value
-                                      )}`
-                                    : ''
-                                }
-                              />
                             </Bar>
+                            <Customized component={renderDashboardCategoryClickLayer} />
                           </BarChart>
                         </ResponsiveContainer>
                       </div>
-                    )}
-                  </div>
-                  <div className="chart-card">
-                    <div className="card-header">
-                      <h3>Spend & income trend (last 6 months)</h3>
                     </div>
-                    {dashboardTrend.length === 0 ? (
-                      <div className="muted">No trend data yet.</div>
-                    ) : (
-                      <div className="chart">
-                        <ResponsiveContainer width="100%" height={260}>
-                          <LineChart data={dashboardTrend}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="month" />
-                            <YAxis />
-                            <Tooltip
-                              formatter={(value: number) => formatCurrency(value)}
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="totalSpend"
-                              stroke="#f2c14e"
-                              strokeWidth={2}
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="totalIncome"
-                              stroke="#2b4cff"
-                              strokeWidth={2}
-                            />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-                    )}
-                  </div>
+                  )}
                 </div>
                 <div className="chart-card">
                   <div className="card-header">
-                    <h3>Transactions per category</h3>
+                    <h3>
+                      TRANSACTIONS:
+                      {selectedDashboardCategory
+                        ? ` ${selectedDashboardCategory.categoryName}`
+                        : ''}
+                    </h3>
                     <div className="actions">
+                      <label className="picker">
+                        Category
+                        <select
+                          value={dashboardCategorySelectionId ?? ''}
+                          onChange={(event) => {
+                            const value = Number(event.target.value)
+                            setDashboardCategorySelectionId(
+                              Number.isNaN(value) ? null : value
+                            )
+                            setDashboardCategoryPage(0)
+                          }}
+                          disabled={dashboardNetCategories.length === 0}
+                        >
+                          {dashboardNetCategories.length === 0 && (
+                            <option value="">No categories</option>
+                          )}
+                          {dashboardNetCategories.map((row) => (
+                            <option key={row.categoryId} value={row.categoryId}>
+                              {row.categoryName}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        onClick={() => loadDashboardCategoryTransactions()}
+                        disabled={!dashboardCategorySelectionId}
+                      >
+                        Refresh
+                      </button>
                       <button
                         onClick={() => setDashboardCategoryPage(0)}
                         disabled={dashboardCategoryPage === 0}
@@ -1549,56 +1860,55 @@ function App() {
                       </button>
                       <span className="page-indicator">
                         Page{' '}
-                        {dashboardSpendCategories.length === 0
+                        {dashboardCategoryTransactionsTotal === 0
                           ? 0
                           : dashboardCategoryPage + 1}
                       </span>
                       <button
                         onClick={() => setDashboardCategoryPage((p) => p + 1)}
                         disabled={
-                          dashboardSpendCategories.length === 0 ||
+                          dashboardCategoryTransactionsTotal === 0 ||
                           (dashboardCategoryPage + 1) *
-                            pageSizeDashboardCategories >=
-                            dashboardSpendCategories.length
+                            pageSizeDashboardTransactions >=
+                            dashboardCategoryTransactionsTotal
                         }
                       >
                         Next
                       </button>
                     </div>
                   </div>
-                  {dashboardSpendCategories.length === 0 ? (
-                    <div className="muted">No categorized transactions yet.</div>
+                  {!dashboardCategorySelectionId ? (
+                    <div className="muted">
+                      Select a category in the chart to see transactions.
+                    </div>
+                  ) : dashboardCategoryTransactionsTotal === 0 ? (
+                    <div className="muted">No transactions for this category.</div>
                   ) : (
-                    <div className="data-table">
+                    <div className="data-table dashboard-transactions">
                       <table>
                         <thead>
                           <tr>
-                            <th>Category</th>
-                            <th>Transactions</th>
-                            <th>Total spend</th>
+                            <th>Date</th>
+                            <th>Payee</th>
+                            <th>Purpose</th>
+                            <th>Amount</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {pagedDashboardCategories.map((row) => (
-                            <tr key={row.categoryId}>
-                              <td>
-                                <span
-                                  className="category-swatch"
-                                  style={{
-                                    backgroundColor:
-                                      row.categoryColor ?? '#2b4cff',
-                                  }}
-                                />
-                                {row.categoryName}
+                          {dashboardCategoryTransactions.map((row) => (
+                            <tr key={row.id}>
+                              <td>{row.bookingDate}</td>
+                              <td>{row.payee ?? '-'}</td>
+                              <td className="purpose">{truncatePurpose(row.purpose, 100)}</td>
+                              <td className="amount">
+                                {row.amount.toFixed(2)} {row.currency}
                               </td>
-                              <td>{row.transactionCount}</td>
-                              <td>{formatCurrency(row.totalSpend)}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                       <div className="data-table-footer">
-                        Total: {dashboardSpendCategories.length}
+                        Total: {dashboardCategoryTransactionsTotal}
                       </div>
                     </div>
                   )}
@@ -1612,12 +1922,19 @@ function App() {
         {activeView === 'transactions' && (
           <>
             <div className="card">
-              <button onClick={pickFile}>Pick DKB CSV</button>
+              <button onClick={() => pickFile('dkb')}>Pick DKB CSV</button>
+              <button onClick={() => pickFile('ing')}>Pick ING CSV</button>
               <button onClick={runImport} disabled={!filePath}>
                 Import
               </button>
               <div className="status">
                 <strong>Status:</strong> {status}
+                {filePath && (
+                  <span className="muted">
+                    {' '}
+                    (provider: {importProvider.toUpperCase()})
+                  </span>
+                )}
               </div>
               <div className="path">
                 <strong>File:</strong> {filePath ?? 'None'}
@@ -1637,6 +1954,12 @@ function App() {
               <div className="card-header">
                 <h2>Transactions</h2>
                 <div className="actions">
+                  <input
+                    type="text"
+                    placeholder="Search payee or purpose..."
+                    value={transactionSearch}
+                    onChange={(event) => setTransactionSearch(event.target.value)}
+                  />
                   <button onClick={() => setPage(0)} disabled={page === 0}>
                     First
                   </button>
@@ -1649,7 +1972,9 @@ function App() {
                   <span className="page-indicator">Page {page + 1}</span>
                   <button
                     onClick={() => setPage((p) => p + 1)}
-                    disabled={transactions.length < pageSizeTransactions}
+                    disabled={
+                      (page + 1) * pageSizeTransactions >= transactionsTotal
+                    }
                   >
                     Next
                   </button>
@@ -1662,6 +1987,7 @@ function App() {
                   data={transactions}
                   columns={transactionColumns}
                   getRowId={(row) => String(row.id)}
+                  totalCount={transactionsTotal}
                   emptyMessage="No transactions yet."
                 />
             </div>
@@ -1836,6 +2162,12 @@ function App() {
               <div className="card-header">
               <h2>Categories</h2>
               <div className="actions">
+                <input
+                  type="text"
+                  placeholder="Search category..."
+                  value={categorySearch}
+                  onChange={(event) => setCategorySearch(event.target.value)}
+                />
                 <button onClick={() => setNewCategoryModalOpen(true)}>
                   Add Category
                 </button>
@@ -1853,13 +2185,13 @@ function App() {
                   Prev
                 </button>
                 <span className="page-indicator">
-                  Page {categories.length === 0 ? 0 : categoriesPage + 1}
+                  Page {categoriesTotal === 0 ? 0 : categoriesPage + 1}
                 </span>
                 <button
                   onClick={() => setCategoriesPage((p) => p + 1)}
                   disabled={
-                    categories.length === 0 ||
-                    (categoriesPage + 1) * pageSizeCategories >= categories.length
+                    categoriesTotal === 0 ||
+                    (categoriesPage + 1) * pageSizeCategories >= categoriesTotal
                   }
                 >
                   Next
@@ -1868,10 +2200,10 @@ function App() {
             </div>
             {categoryStatus && <div className="status">{categoryStatus}</div>}
             <DataTable
-              data={pagedCategories}
+              data={categories}
               columns={categoryColumns}
               getRowId={(row) => String(row.id)}
-              totalCount={categories.length}
+              totalCount={categoriesTotal}
               meta={{
                 categoryEdits,
                 setCategoryEdits,
@@ -1887,6 +2219,12 @@ function App() {
             <div className="card-header">
               <h2>Rules</h2>
               <div className="actions">
+                <input
+                  type="text"
+                  placeholder="Search rules..."
+                  value={ruleSearch}
+                  onChange={(event) => setRuleSearch(event.target.value)}
+                />
                 <button onClick={() => setNewRuleModalOpen(true)}>Add Rule</button>
                 <button onClick={loadRules}>Refresh</button>
                 <button
@@ -1902,13 +2240,13 @@ function App() {
                   Prev
                 </button>
                 <span className="page-indicator">
-                  Page {rules.length === 0 ? 0 : rulesPage + 1}
+                  Page {rulesTotal === 0 ? 0 : rulesPage + 1}
                 </span>
                 <button
                   onClick={() => setRulesPage((p) => p + 1)}
                   disabled={
-                    rules.length === 0 ||
-                    (rulesPage + 1) * pageSizeRules >= rules.length
+                    rulesTotal === 0 ||
+                    (rulesPage + 1) * pageSizeRules >= rulesTotal
                   }
                 >
                   Next
@@ -1916,10 +2254,17 @@ function App() {
               </div>
             </div>
             <DataTable
-              data={pagedRules}
+              data={rules}
               columns={rulesColumns}
               getRowId={(row) => String(row.id)}
-              totalCount={rules.length}
+              totalCount={rulesTotal}
+              meta={{
+                ruleEdits,
+                setRuleEdits,
+                activeCategories,
+                saveRule: updateRule,
+                deleteRule: removeRule,
+              }}
               emptyMessage="No rules yet."
             />
           </div>
@@ -2137,6 +2482,21 @@ function App() {
                 </select>
               </label>
               <label>
+                Match
+                <select
+                  value={ruleDraft.matcherOperator}
+                  onChange={(event) =>
+                    setRuleDraft({
+                      ...ruleDraft,
+                      matcherOperator: event.target.value as RuleDraft['matcherOperator'],
+                    })
+                  }
+                >
+                  <option value="contains">Contains</option>
+                  <option value="equals">Equals</option>
+                </select>
+              </label>
+              <label>
                 Value
                 <input
                   type="text"
@@ -2240,6 +2600,21 @@ function App() {
                   <option value="bic">BIC</option>
                   <option value="amount">Amount</option>
                   <option value="direction">Direction</option>
+                </select>
+              </label>
+              <label>
+                Match
+                <select
+                  value={newRule.matcherOperator}
+                  onChange={(event) =>
+                    setNewRule({
+                      ...newRule,
+                      matcherOperator: event.target.value as RuleDraft['matcherOperator'],
+                    })
+                  }
+                >
+                  <option value="contains">Contains</option>
+                  <option value="equals">Equals</option>
                 </select>
               </label>
               <label>
@@ -2348,6 +2723,16 @@ function App() {
 }
 
 export default App
+
+
+
+
+
+
+
+
+
+
 
 
 

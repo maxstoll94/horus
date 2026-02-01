@@ -28,11 +28,13 @@ contextBridge.exposeInMainWorld('api', {
     getInfo: () => ipcRenderer.invoke('db:get-info'),
   },
   import: {
-    pickFile: () => ipcRenderer.invoke('import:pick-file'),
+    pickFile: (provider?: 'dkb' | 'ing') =>
+      ipcRenderer.invoke('import:pick-file', provider),
     dkb: (filePath: string) => ipcRenderer.invoke('import:dkb', filePath),
+    ing: (filePath: string) => ipcRenderer.invoke('import:ing', filePath),
   },
   transactions: {
-    list: (filters?: { limit?: number; offset?: number }) =>
+    list: (filters?: { limit?: number; offset?: number; search?: string }) =>
       ipcRenderer.invoke('transactions:list', filters),
     listUncategorized: (filters?: { limit?: number; offset?: number }) =>
       ipcRenderer.invoke('transactions:uncategorized', filters),
@@ -48,7 +50,8 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('transactions:remove-category', payload),
   },
   categories: {
-    list: () => ipcRenderer.invoke('categories:list'),
+    list: (filters?: { limit?: number; offset?: number; search?: string }) =>
+      ipcRenderer.invoke('categories:list', filters),
     create: (payload: { name: string; color?: string | null }) =>
       ipcRenderer.invoke('categories:create', payload),
     update: (payload: {
@@ -61,7 +64,8 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('categories:delete', payload),
   },
   rules: {
-    list: () => ipcRenderer.invoke('rules:list'),
+    list: (filters?: { limit?: number; offset?: number; search?: string }) =>
+      ipcRenderer.invoke('rules:list', filters),
     create: (payload: {
       matcherType: string
       matcherValue: string

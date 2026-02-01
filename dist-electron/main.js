@@ -409,7 +409,7 @@ function requireConfig() {
 requireConfig();
 const require$1 = createRequire(import.meta.url);
 const Database = require$1("better-sqlite3");
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 let dbInstance = null;
 function getDatabasePath() {
   return path.join(app.getPath("userData"), "horus.db");
@@ -451,6 +451,7 @@ function applyMigrations(db) {
         CREATE TABLE IF NOT EXISTS rules (
           id INTEGER PRIMARY KEY,
           matcher_type TEXT NOT NULL,
+          matcher_operator TEXT NOT NULL DEFAULT 'contains',
           matcher_value TEXT NOT NULL,
           category_id INTEGER NOT NULL,
           priority INTEGER NOT NULL DEFAULT 0,
@@ -739,6 +740,16 @@ function applyMigrations(db) {
       `);
       db.exec(`INSERT INTO schema_migrations (version) VALUES (8);`);
     }
+    if (currentVersion < 9) {
+      const columns = db.prepare(`PRAGMA table_info(rules);`).all();
+      const existing = new Set(columns.map((col) => col.name));
+      if (!existing.has("matcher_operator")) {
+        db.exec(
+          `ALTER TABLE rules ADD COLUMN matcher_operator TEXT NOT NULL DEFAULT 'contains';`
+        );
+      }
+      db.exec(`INSERT INTO schema_migrations (version) VALUES (9);`);
+    }
   })();
 }
 function initializeDatabase() {
@@ -938,6 +949,7 @@ function listDashboardCategorySpend(month) {
           c.name as categoryName,
           c.color as categoryColor,
           COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END), 0) as totalSpend,
+          COALESCE(SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END), 0) as totalIncome,
           COUNT(1) as transactionCount
         FROM transaction_categories tc
         INNER JOIN transactions t
@@ -945,9 +957,8 @@ function listDashboardCategorySpend(month) {
         INNER JOIN categories c
           ON c.id = tc.category_id
         WHERE substr(t.booking_date, 1, 7) = ?
-          AND t.amount < 0
         GROUP BY c.id, c.name
-        ORDER BY totalSpend DESC, c.name ASC
+        ORDER BY totalSpend DESC, totalIncome DESC, c.name ASC
       `
   ).all(month);
   return rows;
@@ -961,6 +972,7 @@ function listDashboardCategorySpendRange(startMonth, endMonth) {
           c.name as categoryName,
           c.color as categoryColor,
           COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END), 0) as totalSpend,
+          COALESCE(SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END), 0) as totalIncome,
           COUNT(1) as transactionCount
         FROM transaction_categories tc
         INNER JOIN transactions t
@@ -968,9 +980,8 @@ function listDashboardCategorySpendRange(startMonth, endMonth) {
         INNER JOIN categories c
           ON c.id = tc.category_id
         WHERE substr(t.booking_date, 1, 7) BETWEEN ? AND ?
-          AND t.amount < 0
         GROUP BY c.id, c.name, c.color
-        ORDER BY totalSpend DESC, c.name ASC
+        ORDER BY totalSpend DESC, totalIncome DESC, c.name ASC
       `
   ).all(startMonth, endMonth);
   return rows;
@@ -996,6 +1007,13 @@ function listTransactions(filters = {}) {
   const db = initializeDatabase();
   const limit = filters.limit ?? 200;
   const offset = filters.offset ?? 0;
+  const search = filters.search?.trim();
+  const params = [];
+  const where = search ? (() => {
+    const term = `%${search.toLowerCase()}%`;
+    params.push(term, term);
+    return `WHERE lower(t.payee) LIKE ? OR lower(t.purpose) LIKE ?`;
+  })() : "";
   const rows = db.prepare(
     `
         SELECT
@@ -1011,11 +1029,19 @@ function listTransactions(filters = {}) {
             WHERE tc.transaction_id = t.id
           ) as categoryCount
         FROM transactions t
+        ${where}
         ORDER BY booking_date DESC, id DESC
         LIMIT ? OFFSET ?
       `
-  ).all(limit, offset);
-  return rows;
+  ).all(...params, limit, offset);
+  const total = db.prepare(
+    `
+        SELECT COUNT(1) as total
+        FROM transactions t
+        ${where}
+      `
+  ).get(...params);
+  return { rows, total: total.total };
 }
 function listUncategorizedTransactions(filters = {}) {
   const db = initializeDatabase();
@@ -1117,8 +1143,17 @@ function removeTransactionCategory(transactionId, categoryId) {
   const result = stmt.run(transactionId, categoryId);
   return result.changes > 0;
 }
-function listCategories() {
+function listCategories(filters = {}) {
   const db = initializeDatabase();
+  const limit = filters.limit ?? 200;
+  const offset = filters.offset ?? 0;
+  const search = filters.search?.trim();
+  const params = [];
+  const where = search ? (() => {
+    const term = `%${search.toLowerCase()}%`;
+    params.push(term);
+    return `WHERE lower(name) LIKE ?`;
+  })() : "";
   const rows = db.prepare(
     `
         SELECT
@@ -1127,27 +1162,57 @@ function listCategories() {
           color,
           is_active as isActive
         FROM categories
+        ${where}
         ORDER BY name ASC
+        LIMIT ? OFFSET ?
       `
-  ).all();
-  return rows;
+  ).all(...params, limit, offset);
+  const total = db.prepare(
+    `
+        SELECT COUNT(1) as total
+        FROM categories
+        ${where}
+      `
+  ).get(...params);
+  return { rows, total: total.total };
 }
-function listRules() {
+function listRules(filters = {}) {
   const db = initializeDatabase();
+  const limit = filters.limit ?? 200;
+  const offset = filters.offset ?? 0;
+  const search = filters.search?.trim();
+  const params = [];
+  const where = search ? (() => {
+    const term = `%${search.toLowerCase()}%`;
+    params.push(term, term);
+    return `WHERE lower(r.matcher_value) LIKE ? OR lower(c.name) LIKE ?`;
+  })() : "";
   const rows = db.prepare(
     `
         SELECT
-          id,
-          matcher_type as matcherType,
-          matcher_value as matcherValue,
-          category_id as categoryId,
-          priority,
-          is_active as isActive
-        FROM rules
-        ORDER BY priority DESC, id DESC
+          r.id,
+          r.matcher_type as matcherType,
+          r.matcher_operator as matcherOperator,
+          r.matcher_value as matcherValue,
+          r.category_id as categoryId,
+          r.priority,
+          r.is_active as isActive
+        FROM rules r
+        LEFT JOIN categories c ON c.id = r.category_id
+        ${where}
+        ORDER BY r.priority DESC, r.id DESC
+        LIMIT ? OFFSET ?
       `
-  ).all();
-  return rows;
+  ).all(...params, limit, offset);
+  const total = db.prepare(
+    `
+        SELECT COUNT(1) as total
+        FROM rules r
+        LEFT JOIN categories c ON c.id = r.category_id
+        ${where}
+      `
+  ).get(...params);
+  return { rows, total: total.total };
 }
 function getAiSettings() {
   const db = initializeDatabase();
@@ -1274,7 +1339,7 @@ function upsertAiSuggestions(rows) {
         confidence,
         reason,
         model
-      ) VALUES (?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(transaction_id) DO UPDATE SET
         category_id = excluded.category_id,
         confidence = excluded.confidence,
@@ -1322,15 +1387,17 @@ function createRule(input) {
     `
       INSERT INTO rules (
         matcher_type,
+        matcher_operator,
         matcher_value,
         category_id,
         priority,
         is_active
-      ) VALUES (?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?)
     `
   );
   const result = stmt.run(
     input.matcherType,
+    input.matcherOperator ?? "contains",
     input.matcherValue,
     input.categoryId,
     input.priority ?? 100,
@@ -1344,6 +1411,7 @@ function updateRule(id, updates) {
     `
         SELECT
           matcher_type as matcherType,
+          matcher_operator as matcherOperator,
           matcher_value as matcherValue,
           category_id as categoryId,
           priority,
@@ -1357,6 +1425,7 @@ function updateRule(id, updates) {
   }
   const next = {
     matcherType: updates.matcherType ?? current.matcherType,
+    matcherOperator: updates.matcherOperator ?? current.matcherOperator,
     matcherValue: updates.matcherValue ?? current.matcherValue,
     categoryId: updates.categoryId ?? current.categoryId,
     priority: updates.priority ?? current.priority,
@@ -1366,6 +1435,7 @@ function updateRule(id, updates) {
     `
       UPDATE rules
       SET matcher_type = ?,
+          matcher_operator = ?,
           matcher_value = ?,
           category_id = ?,
           priority = ?,
@@ -1375,6 +1445,7 @@ function updateRule(id, updates) {
     `
   ).run(
     next.matcherType,
+    next.matcherOperator,
     next.matcherValue,
     next.categoryId,
     next.priority,
@@ -1393,18 +1464,27 @@ function matchesRule(rule, tx) {
   if (!value) {
     return false;
   }
+  const operator = (rule.matcherOperator || "contains").toLowerCase();
+  const matchesText = (field) => {
+    const haystack = (field ?? "").toLowerCase();
+    const needle = value.toLowerCase();
+    if (operator === "equals") {
+      return haystack === needle;
+    }
+    return haystack.includes(needle);
+  };
   switch (rule.matcherType) {
     case "payee": {
-      return (tx.payee ?? "").toLowerCase().includes(value.toLowerCase());
+      return matchesText(tx.payee);
     }
     case "purpose": {
-      return (tx.purpose ?? "").toLowerCase().includes(value.toLowerCase());
+      return matchesText(tx.purpose);
     }
     case "iban": {
-      return (tx.iban ?? "").toLowerCase().includes(value.toLowerCase());
+      return matchesText(tx.iban);
     }
     case "bic": {
-      return (tx.bic ?? "").toLowerCase().includes(value.toLowerCase());
+      return matchesText(tx.bic);
     }
     case "amount": {
       const target = Number.parseFloat(value.replace(",", "."));
@@ -1435,6 +1515,7 @@ function applyRulesToUncategorized() {
         SELECT
           id,
           matcher_type as matcherType,
+          matcher_operator as matcherOperator,
           matcher_value as matcherValue,
           category_id as categoryId,
           priority,
@@ -3075,37 +3156,44 @@ function parseDkbRecords(records) {
   records.forEach((record, index) => {
     const map = buildHeaderMap(record);
     const bookingDate = parseGermanDate(
-      getHeaderValue(record, map, ["Buchungsdatum", "Buchungstag", "Buchung"])
+      getHeaderValue(record, map, ["Buchungsdatum", "Buchungstag", "Buchung", "Belegdatum"])
     );
     const valueDate = parseGermanDate(
       getHeaderValue(record, map, ["Wertstellung", "Valuta"])
     );
     const amount = parseEuroAmount(
-      getHeaderValue(record, map, ["Betrag (€)", "Betrag (EUR)", "Betrag", "Umsatz in EUR"])
+      getHeaderValue(record, map, [
+        "Betrag (â‚¬)",
+        "Betrag (€)",
+        "Betrag (EUR)",
+        "Betrag",
+        "Umsatz in EUR"
+      ])
     );
-    const currency = getHeaderValue(record, map, ["Währung", "Waehrung", "Currency"])?.trim() || "EUR";
+    const currency = getHeaderValue(record, map, ["WÃ¤hrung", "Waehrung", "Currency"])?.trim() || "EUR";
     const payee = getHeaderValue(record, map, [
-      "Zahlungsempfänger*in",
+      "ZahlungsempfÃ¤nger*in",
       "Zahlungsempfaenger*in",
-      "Zahlungsempfänger",
+      "ZahlungsempfÃ¤nger",
       "Zahlungsempfaenger",
-      "Auftraggeber / Begünstigter",
-      "Auftraggeber/Empfänger",
-      "Empfänger",
-      "Begünstigter"
+      "Auftraggeber / BegÃ¼nstigter",
+      "Auftraggeber/EmpfÃ¤nger",
+      "EmpfÃ¤nger",
+      "BegÃ¼nstigter",
+      "Beschreibung"
     ])?.trim() || null;
     const payer = getHeaderValue(record, map, [
       "Zahlungspflichtige*r",
       "Zahlungspflichtiger",
       "Zahlungspflichtige"
     ])?.trim() || null;
-    const purpose = getHeaderValue(record, map, ["Verwendungszweck"])?.trim() || null;
+    const purpose = getHeaderValue(record, map, ["Verwendungszweck", "Umsatztyp"])?.trim() || null;
     const iban = getHeaderValue(record, map, ["IBAN"])?.trim() || null;
     const bic = getHeaderValue(record, map, ["BIC"])?.trim() || null;
     const reference = getHeaderValue(record, map, [
       "Kundenreferenz",
       "Mandatsreferenz",
-      "Gläubiger-ID",
+      "GlÃ¤ubiger-ID",
       "Glaeubiger-ID"
     ])?.trim() || null;
     const account = getHeaderValue(record, map, ["Girokonto", "Kontonummer", "Account"])?.trim() || iban;
@@ -3148,12 +3236,12 @@ function parseDkbCsv(contents) {
     bom: true
   });
   const headerIndex = rows.findIndex(
-    (row) => row.some((cell) => cell?.toLowerCase().includes("buchungsdatum"))
+    (row) => row.some((cell) => cell?.toLowerCase().includes("buchungsdatum") || cell?.toLowerCase().includes("belegdatum"))
   );
   if (headerIndex === -1) {
     return {
       transactions: [],
-      warnings: ["DKB: header row not found (missing Buchungsdatum)"]
+      warnings: ["DKB: header row not found (missing Buchungsdatum/Belegdatum)"]
     };
   }
   const headers = rows[headerIndex];
@@ -3166,6 +3254,148 @@ function parseDkbCsv(contents) {
     return record;
   });
   return parseDkbRecords(records);
+}
+function parseIngDate(value) {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (/^\d{8}$/.test(trimmed)) {
+    return `${trimmed.slice(0, 4)}-${trimmed.slice(4, 6)}-${trimmed.slice(6, 8)}`;
+  }
+  return parseGermanDate(trimmed);
+}
+function extractField(source, label, endLabels) {
+  if (!source) {
+    return null;
+  }
+  const lower = source.toLowerCase();
+  const labelLower = label.toLowerCase();
+  const start = lower.indexOf(labelLower);
+  if (start === -1) {
+    return null;
+  }
+  const startValue = start + labelLower.length;
+  let end = source.length;
+  for (const endLabel of endLabels) {
+    const idx = lower.indexOf(endLabel.toLowerCase(), startValue);
+    if (idx !== -1 && idx < end) {
+      end = idx;
+    }
+  }
+  const value = source.slice(startValue, end).trim();
+  return value ? value : null;
+}
+function parseIngRecords(records) {
+  const warnings = [];
+  const transactions = [];
+  records.forEach((record, index) => {
+    const map = buildHeaderMap(record);
+    const bookingDate = parseIngDate(
+      getHeaderValue(record, map, ["Date", "Booking date", "Book date"])
+    );
+    const amountValue = parseEuroAmount(
+      getHeaderValue(record, map, ["Amount (EUR)", "Amount", "Amount (Euro)"])
+    );
+    const direction = getHeaderValue(record, map, [
+      "Debit/credit",
+      "Debit credit",
+      "Debit/Credit"
+    ])?.trim() ?? "";
+    const currency = getHeaderValue(record, map, ["Currency"])?.trim() || "EUR";
+    const account = getHeaderValue(record, map, ["Account", "Account number"])?.trim() || null;
+    const payee = getHeaderValue(record, map, ["Name / Description", "Name/Description"])?.trim() || null;
+    const counterparty = getHeaderValue(record, map, ["Counterparty", "Counter party"])?.trim() || null;
+    const notifications = getHeaderValue(record, map, ["Notifications"])?.trim();
+    const purpose = extractField(notifications, "Description:", [
+      " IBAN:",
+      " Reference:",
+      " Mandate ID:",
+      " Creditor ID:",
+      " Value date:",
+      " Date/time:",
+      " Other party:",
+      " Name:"
+    ]) || getHeaderValue(record, map, ["Transaction type"])?.trim() || null;
+    const iban = counterparty || (notifications?.match(/IBAN:\s*([A-Z]{2}[0-9A-Z]+)/)?.[1] ?? null);
+    const reference = extractField(notifications, "Reference:", [
+      " Mandate ID:",
+      " Creditor ID:",
+      " Value date:",
+      " Date/time:",
+      " Other party:"
+    ]) || extractField(notifications, "Mandate ID:", [
+      " Creditor ID:",
+      " Value date:",
+      " Date/time:"
+    ]) || null;
+    const valueDate = parseGermanDate(
+      notifications?.match(/Value date:\s*([0-9]{2}[\/\-.][0-9]{2}[\/\-.][0-9]{4})/i)?.[1]
+    );
+    if (!bookingDate || amountValue === null) {
+      warnings.push(`ING row ${index + 1}: missing booking date or amount`);
+      return;
+    }
+    let amount = amountValue;
+    if (/debit/i.test(direction)) {
+      amount = -Math.abs(amountValue);
+    } else if (/credit/i.test(direction)) {
+      amount = Math.abs(amountValue);
+    }
+    const rawHash = makeRawHash([
+      bookingDate,
+      valueDate,
+      amount.toString(),
+      currency,
+      payee,
+      purpose,
+      iban,
+      reference
+    ]);
+    transactions.push({
+      account,
+      bookingDate,
+      valueDate,
+      amount,
+      currency,
+      payee,
+      purpose,
+      iban,
+      bic: null,
+      reference,
+      rawHash
+    });
+  });
+  return { transactions, warnings };
+}
+function parseIngCsv(contents) {
+  const rows = parse(contents, {
+    delimiter: ";",
+    relax_quotes: true,
+    relax_column_count: true,
+    skip_empty_lines: true,
+    bom: true
+  });
+  const headerIndex = rows.findIndex((row) => {
+    const normalized = row.map((cell) => normalizeHeader(cell || ""));
+    return normalized.includes("date") && normalized.includes("amount (eur)");
+  });
+  if (headerIndex === -1) {
+    return {
+      transactions: [],
+      warnings: ["ING: header row not found (missing Date/Amount (EUR))"]
+    };
+  }
+  const headers = rows[headerIndex];
+  const dataRows = rows.slice(headerIndex + 1);
+  const records = dataRows.filter((row) => row.some((cell) => cell?.trim() !== "")).map((row) => {
+    const record = {};
+    headers.forEach((header, idx) => {
+      record[header] = row[idx] ?? "";
+    });
+    return record;
+  });
+  return parseIngRecords(records);
 }
 const RESPONSE_SCHEMA = {
   type: "json_schema",
@@ -3367,7 +3597,7 @@ app.on("activate", () => {
 app.whenReady().then(() => {
   initializeDatabase();
   ipcMain.handle("db:get-info", () => getDatabaseInfo());
-  ipcMain.handle("categories:list", () => listCategories());
+  ipcMain.handle("categories:list", (_event, filters) => listCategories(filters));
   ipcMain.handle("categories:create", (_event, payload) => {
     const name = typeof payload?.name === "string" ? payload.name.trim() : "";
     if (!name) {
@@ -3391,7 +3621,7 @@ app.whenReady().then(() => {
     }
     return deleteCategory(payload.id);
   });
-  ipcMain.handle("rules:list", () => listRules());
+  ipcMain.handle("rules:list", (_event, filters) => listRules(filters));
   ipcMain.handle("rules:create", (_event, payload) => {
     if (!payload?.matcherType || !payload?.matcherValue || !payload?.categoryId) {
       return null;
@@ -3512,9 +3742,10 @@ app.whenReady().then(() => {
     }
     return removeTransactionCategory(payload.transactionId, payload.categoryId);
   });
-  ipcMain.handle("import:pick-file", async () => {
+  ipcMain.handle("import:pick-file", async (_event, provider) => {
+    const title = provider === "ing" ? "Select ING CSV file" : provider === "dkb" ? "Select DKB CSV file" : "Select CSV file";
     const result = await dialog.showOpenDialog({
-      title: "Select DKB CSV file",
+      title,
       properties: ["openFile"],
       filters: [{ name: "CSV", extensions: ["csv"] }]
     });
@@ -3533,6 +3764,24 @@ app.whenReady().then(() => {
       return { success: false, error: "No transactions found.", warnings };
     }
     insertImport("dkb", path.basename(filePath));
+    const { inserted, skipped } = insertTransactions(transactions);
+    return {
+      success: true,
+      inserted,
+      skipped,
+      warnings
+    };
+  });
+  ipcMain.handle("import:ing", async (_event, filePath) => {
+    if (!filePath) {
+      return { success: false, error: "No file path provided." };
+    }
+    const contents = await readFile(filePath, "utf-8");
+    const { transactions, warnings } = parseIngCsv(contents);
+    if (transactions.length === 0) {
+      return { success: false, error: "No transactions found.", warnings };
+    }
+    insertImport("ing", path.basename(filePath));
     const { inserted, skipped } = insertTransactions(transactions);
     return {
       success: true,

@@ -1,4 +1,4 @@
-import { parse } from 'csv-parse/sync'
+﻿import { parse } from 'csv-parse/sync'
 import type { ImportResult, ParsedTransaction, RawRecord } from './types'
 import {
   buildHeaderMap,
@@ -15,27 +15,34 @@ function parseDkbRecords(records: RawRecord[]): ImportResult {
   records.forEach((record, index) => {
     const map = buildHeaderMap(record)
     const bookingDate = parseGermanDate(
-      getHeaderValue(record, map, ['Buchungsdatum', 'Buchungstag', 'Buchung'])
+      getHeaderValue(record, map, ['Buchungsdatum', 'Buchungstag', 'Buchung', 'Belegdatum'])
     )
     const valueDate = parseGermanDate(
       getHeaderValue(record, map, ['Wertstellung', 'Valuta'])
     )
     const amount = parseEuroAmount(
-      getHeaderValue(record, map, ['Betrag (€)', 'Betrag (EUR)', 'Betrag', 'Umsatz in EUR'])
+      getHeaderValue(record, map, [
+        'Betrag (â‚¬)',
+        'Betrag (€)',
+        'Betrag (EUR)',
+        'Betrag',
+        'Umsatz in EUR',
+      ])
     )
     const currency =
-      getHeaderValue(record, map, ['Währung', 'Waehrung', 'Currency'])?.trim() ||
+      getHeaderValue(record, map, ['WÃ¤hrung', 'Waehrung', 'Currency'])?.trim() ||
       'EUR'
     const payee =
       getHeaderValue(record, map, [
-        'Zahlungsempfänger*in',
+        'ZahlungsempfÃ¤nger*in',
         'Zahlungsempfaenger*in',
-        'Zahlungsempfänger',
+        'ZahlungsempfÃ¤nger',
         'Zahlungsempfaenger',
-        'Auftraggeber / Begünstigter',
-        'Auftraggeber/Empfänger',
-        'Empfänger',
-        'Begünstigter',
+        'Auftraggeber / BegÃ¼nstigter',
+        'Auftraggeber/EmpfÃ¤nger',
+        'EmpfÃ¤nger',
+        'BegÃ¼nstigter',
+        'Beschreibung',
       ])?.trim() || null
     const payer =
       getHeaderValue(record, map, [
@@ -44,14 +51,14 @@ function parseDkbRecords(records: RawRecord[]): ImportResult {
         'Zahlungspflichtige',
       ])?.trim() || null
     const purpose =
-      getHeaderValue(record, map, ['Verwendungszweck'])?.trim() || null
+      getHeaderValue(record, map, ['Verwendungszweck', 'Umsatztyp'])?.trim() || null
     const iban = getHeaderValue(record, map, ['IBAN'])?.trim() || null
     const bic = getHeaderValue(record, map, ['BIC'])?.trim() || null
     const reference =
       getHeaderValue(record, map, [
         'Kundenreferenz',
         'Mandatsreferenz',
-        'Gläubiger-ID',
+        'GlÃ¤ubiger-ID',
         'Glaeubiger-ID',
       ])?.trim() || null
     const account =
@@ -102,13 +109,13 @@ export function parseDkbCsv(contents: string): ImportResult {
   }) as string[][]
 
   const headerIndex = rows.findIndex((row) =>
-    row.some((cell) => cell?.toLowerCase().includes('buchungsdatum'))
+    row.some((cell) => cell?.toLowerCase().includes('buchungsdatum') || cell?.toLowerCase().includes('belegdatum'))
   )
 
   if (headerIndex === -1) {
     return {
       transactions: [],
-      warnings: ['DKB: header row not found (missing Buchungsdatum)'],
+      warnings: ['DKB: header row not found (missing Buchungsdatum/Belegdatum)'],
     }
   }
 
@@ -127,3 +134,7 @@ export function parseDkbCsv(contents: string): ImportResult {
 
   return parseDkbRecords(records)
 }
+
+
+
+
