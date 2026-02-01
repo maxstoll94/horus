@@ -487,7 +487,7 @@ function App() {
             >
               <span className="rule-icon rule-icon-remove" aria-hidden="true" />
               <span className="rule-action-text">
-                <strong>Remove</strong>
+                <strong>Delete</strong>
                 <span className="rule-action-sub">Transaction</span>
               </span>
             </button>
@@ -690,13 +690,23 @@ function App() {
           return (
             <div className="rule-actions">
               <button
+                className="rule-action"
                 onClick={() => meta.saveCategory(row.original.id)}
                 disabled={!hasChanges}
               >
-                Save
+                <span className="rule-icon rule-icon-save" aria-hidden="true" />
+                <span className="rule-action-text">
+                  <strong>Save</strong>
+                </span>
               </button>
-              <button onClick={() => meta.deleteCategoryRow(row.original.id)}>
-                Delete
+              <button
+                className="rule-action rule-action-remove"
+                onClick={() => meta.deleteCategoryRow(row.original.id)}
+              >
+                <span className="rule-icon rule-icon-remove" aria-hidden="true" />
+                <span className="rule-action-text">
+                  <strong>Delete</strong>
+                </span>
               </button>
             </div>
           )
@@ -900,10 +910,25 @@ function App() {
               draft.isActive !== row.original.isActive)
           return (
             <div className="rule-actions">
-              <button onClick={() => meta.saveRule(row.original.id)} disabled={!hasChanges}>
-                Save
+              <button
+                className="rule-action"
+                onClick={() => meta.saveRule(row.original.id)}
+                disabled={!hasChanges}
+              >
+                <span className="rule-icon rule-icon-save" aria-hidden="true" />
+                <span className="rule-action-text">
+                  <strong>Save</strong>
+                </span>
               </button>
-              <button onClick={() => meta.deleteRule(row.original.id)}>Delete</button>
+              <button
+                className="rule-action rule-action-remove"
+                onClick={() => meta.deleteRule(row.original.id)}
+              >
+                <span className="rule-icon rule-icon-remove" aria-hidden="true" />
+                <span className="rule-action-text">
+                  <strong>Delete</strong>
+                </span>
+              </button>
             </div>
           )
         },
@@ -1474,20 +1499,20 @@ function App() {
 
   const deleteTransactionRow = (transactionId: number) => {
     setConfirmDialog({
-      message: 'Remove this transaction? This cannot be undone.',
+      message: 'Delete this transaction? This cannot be undone.',
       onConfirm: async () => {
         const success = await window.api.transactions.delete({
           id: transactionId,
         })
         if (success) {
-          pushToast('Transaction removed.', 'success')
+      pushToast('Transaction deleted.', 'success')
           loadTransactions()
           loadUncategorized()
           loadCategorized()
           loadDashboardMonths()
           loadDashboardData()
         } else {
-          pushToast('Transaction could not be removed.', 'error')
+      pushToast('Transaction could not be deleted.', 'error')
         }
         setConfirmDialog(null)
       },
@@ -2917,7 +2942,7 @@ function App() {
             </div>
             <div className="modal-actions">
               <button onClick={() => setConfirmDialog(null)}>Cancel</button>
-              <button onClick={confirmDialog.onConfirm}>Remove</button>
+              <button onClick={confirmDialog.onConfirm}>Delete</button>
             </div>
           </div>
         </div>
