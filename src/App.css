@@ -351,6 +351,12 @@ button {
   align-items: stretch;
 }
 
+.rule-action-separator {
+  width: 1px;
+  background: #e5e7eb;
+  align-self: stretch;
+}
+
 .rule-action {
   display: inline-flex;
   align-items: center;
@@ -415,6 +421,31 @@ button {
 
 .rule-icon-custom::after {
   content: 'C';
+}
+
+.rule-action-remove {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.rule-icon-add {
+  background: #ecfdf3;
+  border-color: #16a34a;
+  color: #15803d;
+}
+
+.rule-icon-add::after {
+  content: 'A';
+}
+
+.rule-icon-remove {
+  background: #fee2e2;
+  border-color: #dc2626;
+  color: #991b1b;
+}
+
+.rule-icon-remove::after {
+  content: 'R';
 }
 
 .ai-form {
