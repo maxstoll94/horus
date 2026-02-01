@@ -60,6 +60,8 @@ electron.contextBridge.exposeInMainWorld("api", {
     months: () => electron.ipcRenderer.invoke("dashboard:months"),
     summary: (payload) => electron.ipcRenderer.invoke("dashboard:summary", payload),
     categories: (payload) => electron.ipcRenderer.invoke("dashboard:categories", payload),
+    summaryRange: (payload) => electron.ipcRenderer.invoke("dashboard:summary:range", payload),
+    categoriesRange: (payload) => electron.ipcRenderer.invoke("dashboard:categories:range", payload),
     trend: (payload) => electron.ipcRenderer.invoke("dashboard:trend", payload ?? {})
   }
 });

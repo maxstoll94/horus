@@ -518,6 +518,7 @@ export type DashboardSummaryRow = {
 export type DashboardCategorySpendRow = {
   categoryId: number
   categoryName: string
+  categoryColor: string | null
   totalSpend: number
   transactionCount: number
 }
@@ -590,6 +591,64 @@ export function getDashboardSummary(month: string): DashboardSummaryRow {
   return row
 }
 
+export function getDashboardSummaryRange(
+  startMonth: string,
+  endMonth: string
+): DashboardSummaryRow {
+  const db = initializeDatabase()
+  const row = db
+    .prepare(
+      `
+        SELECT
+          ? as month,
+          COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) as totalIncome,
+          COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END), 0) as totalSpend,
+          COALESCE(SUM(amount), 0) as net,
+          COUNT(1) as transactionCount,
+          (
+            SELECT COUNT(DISTINCT t2.id)
+            FROM transactions t2
+            INNER JOIN transaction_categories tc2
+              ON tc2.transaction_id = t2.id
+            WHERE substr(t2.booking_date, 1, 7) BETWEEN ? AND ?
+          ) as categorizedCount,
+          (
+            SELECT COUNT(1)
+            FROM transactions t3
+            LEFT JOIN transaction_categories tc3
+              ON tc3.transaction_id = t3.id
+            WHERE tc3.transaction_id IS NULL
+              AND substr(t3.booking_date, 1, 7) BETWEEN ? AND ?
+          ) as uncategorizedCount
+        FROM transactions t
+        WHERE substr(t.booking_date, 1, 7) BETWEEN ? AND ?
+      `
+    )
+    .get(
+      `${startMonth} to ${endMonth}`,
+      startMonth,
+      endMonth,
+      startMonth,
+      endMonth,
+      startMonth,
+      endMonth
+    ) as DashboardSummaryRow | undefined
+
+  if (!row) {
+    return {
+      month: `${startMonth} to ${endMonth}`,
+      totalIncome: 0,
+      totalSpend: 0,
+      net: 0,
+      transactionCount: 0,
+      categorizedCount: 0,
+      uncategorizedCount: 0,
+    }
+  }
+
+  return row
+}
+
 export function listDashboardCategorySpend(month: string) {
   const db = initializeDatabase()
   const rows = db
@@ -613,6 +672,36 @@ export function listDashboardCategorySpend(month: string) {
       `
     )
     .all(month) as DashboardCategorySpendRow[]
+
+  return rows
+}
+
+export function listDashboardCategorySpendRange(
+  startMonth: string,
+  endMonth: string
+) {
+  const db = initializeDatabase()
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          c.id as categoryId,
+          c.name as categoryName,
+          c.color as categoryColor,
+          COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END), 0) as totalSpend,
+          COUNT(1) as transactionCount
+        FROM transaction_categories tc
+        INNER JOIN transactions t
+          ON t.id = tc.transaction_id
+        INNER JOIN categories c
+          ON c.id = tc.category_id
+        WHERE substr(t.booking_date, 1, 7) BETWEEN ? AND ?
+          AND t.amount < 0
+        GROUP BY c.id, c.name, c.color
+        ORDER BY totalSpend DESC, c.name ASC
+      `
+    )
+    .all(startMonth, endMonth) as DashboardCategorySpendRow[]
 
   return rows
 }
@@ -724,14 +813,46 @@ export type CategorizedTransactionRow = TransactionRow & {
   categoryName: string
 }
 
-export function listCategorizedTransactions(filters: TransactionListFilters = {}) {
+export function listCategorizedTransactions(
+  filters: TransactionListFilters & { categoryIds?: number[] } = {}
+) {
   const db = initializeDatabase()
   const limit = filters.limit ?? 200
   const offset = filters.offset ?? 0
+  const categoryIds = Array.isArray(filters.categoryIds)
+    ? filters.categoryIds.filter((id) => Number.isInteger(id))
+    : []
+
+  const filterClause =
+    categoryIds.length > 0
+      ? `WHERE tc.category_id IN (${categoryIds.map(() => '?').join(',')})`
+      : ''
+
+  const total = db
+    .prepare(
+      `
+        SELECT COUNT(DISTINCT t.id) as total
+        FROM transactions t
+        INNER JOIN transaction_categories tc
+          ON tc.transaction_id = t.id
+        ${filterClause}
+      `
+    )
+    .get(...categoryIds) as { total: number }
 
   const rows = db
     .prepare(
       `
+        WITH page_ids AS (
+          SELECT t.id
+          FROM transactions t
+          INNER JOIN transaction_categories tc
+            ON tc.transaction_id = t.id
+          ${filterClause}
+          GROUP BY t.id
+          ORDER BY t.booking_date DESC, t.id DESC
+          LIMIT ? OFFSET ?
+        )
         SELECT
           t.id,
           t.booking_date as bookingDate,
@@ -751,13 +872,13 @@ export function listCategorizedTransactions(filters: TransactionListFilters = {}
           ON tc.transaction_id = t.id
         INNER JOIN categories c
           ON c.id = tc.category_id
+        WHERE t.id IN (SELECT id FROM page_ids)
         ORDER BY t.booking_date DESC, t.id DESC
-        LIMIT ? OFFSET ?
       `
     )
-    .all(limit, offset) as CategorizedTransactionRow[]
+    .all(...categoryIds, limit, offset) as CategorizedTransactionRow[]
 
-  return rows
+  return { rows, total: total?.total ?? 0 }
 }
 
 export function removeTransactionCategory(transactionId: number, categoryId: number) {

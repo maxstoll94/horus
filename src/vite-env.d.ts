@@ -34,17 +34,24 @@ interface Window {
         purpose: string | null
         categoryCount: number
       }>>
-      listCategorized: (filters?: { limit?: number; offset?: number }) => Promise<Array<{
-        id: number
-        bookingDate: string
-        amount: number
-        currency: string
-        payee: string | null
-        purpose: string | null
-        categoryCount: number
-        categoryId: number
-        categoryName: string
-      }>>
+      listCategorized: (filters?: {
+        limit?: number
+        offset?: number
+        categoryIds?: number[]
+      }) => Promise<{
+        rows: Array<{
+          id: number
+          bookingDate: string
+          amount: number
+          currency: string
+          payee: string | null
+          purpose: string | null
+          categoryCount: number
+          categoryId: number
+          categoryName: string
+        }>
+        total: number
+      }>
       addCategory: (payload: { transactionId: number; categoryId: number }) => Promise<boolean>
       removeCategory: (payload: { transactionId: number; categoryId: number }) => Promise<boolean>
     }
@@ -164,6 +171,29 @@ interface Window {
       categories: (payload: { month: string }) => Promise<Array<{
         categoryId: number
         categoryName: string
+        categoryColor: string | null
+        totalSpend: number
+        transactionCount: number
+      }>>
+      summaryRange: (payload: {
+        startMonth: string
+        endMonth: string
+      }) => Promise<{
+        month: string
+        totalIncome: number
+        totalSpend: number
+        net: number
+        transactionCount: number
+        categorizedCount: number
+        uncategorizedCount: number
+      } | null>
+      categoriesRange: (payload: {
+        startMonth: string
+        endMonth: string
+      }) => Promise<Array<{
+        categoryId: number
+        categoryName: string
+        categoryColor: string | null
         totalSpend: number
         transactionCount: number
       }>>

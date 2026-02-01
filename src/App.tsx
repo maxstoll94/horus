@@ -6,6 +6,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  LabelList,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -88,6 +89,7 @@ function App() {
   const [transactions, setTransactions] = useState<TransactionRow[]>([])
   const [uncategorized, setUncategorized] = useState<TransactionRow[]>([])
   const [categorized, setCategorized] = useState<CategorizedViewRow[]>([])
+  const [categorizedTotal, setCategorizedTotal] = useState(0)
   const [loadingTransactions, setLoadingTransactions] = useState(false)
   const [categories, setCategories] = useState<CategoryRow[]>([])
   const [newCategoryName, setNewCategoryName] = useState('')
@@ -116,6 +118,13 @@ function App() {
   const [pageSizeTransactions, setPageSizeTransactions] = useState(20)
   const [pageSizeUncategorized, setPageSizeUncategorized] = useState(16)
   const [pageSizeCategorized, setPageSizeCategorized] = useState(16)
+  const [categoriesPage, setCategoriesPage] = useState(0)
+  const [rulesPage, setRulesPage] = useState(0)
+  const [dashboardCategoryPage, setDashboardCategoryPage] = useState(0)
+  const [pageSizeCategories, setPageSizeCategories] = useState(16)
+  const [pageSizeRules, setPageSizeRules] = useState(16)
+  const [pageSizeDashboardCategories, setPageSizeDashboardCategories] =
+    useState(8)
   const [selection, setSelection] = useState<Record<number, number[]>>({})
   const [categorizedFilter, setCategorizedFilter] = useState<number[]>([])
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null)
@@ -184,6 +193,9 @@ function App() {
   })
   const [dashboardMonths, setDashboardMonths] = useState<string[]>([])
   const [dashboardMonth, setDashboardMonth] = useState<string>('')
+  const [dashboardRange, setDashboardRange] = useState<
+    'month' | 'last1' | 'last3' | 'last6'
+  >('month')
   const [dashboardSummary, setDashboardSummary] = useState<{
     month: string
     totalIncome: number
@@ -216,6 +228,28 @@ function App() {
     [dashboardCategories]
   )
 
+  const pagedCategories = useMemo(() => {
+    const start = categoriesPage * pageSizeCategories
+    return categories.slice(start, start + pageSizeCategories)
+  }, [categories, categoriesPage, pageSizeCategories])
+
+  const pagedRules = useMemo(() => {
+    const start = rulesPage * pageSizeRules
+    return rules.slice(start, start + pageSizeRules)
+  }, [rules, rulesPage, pageSizeRules])
+
+  const pagedDashboardCategories = useMemo(() => {
+    const start = dashboardCategoryPage * pageSizeDashboardCategories
+    return dashboardSpendCategories.slice(
+      start,
+      start + pageSizeDashboardCategories
+    )
+  }, [
+    dashboardSpendCategories,
+    dashboardCategoryPage,
+    pageSizeDashboardCategories,
+  ])
+
   const activeCategories = useMemo(
     () => categories.filter((cat) => cat.isActive === 1),
     [categories]
@@ -238,16 +272,6 @@ function App() {
       })),
     [categories]
   )
-
-  const filteredCategorized = useMemo(() => {
-    if (categorizedFilter.length === 0) {
-      return categorized
-    }
-    const selected = new Set(categorizedFilter)
-    return categorized.filter((row) =>
-      row.categories.some((cat) => selected.has(cat.id))
-    )
-  }, [categorized, categorizedFilter])
 
   const transactionColumns = useMemo<ColumnDef<TransactionRow>[]>(
     () => [
@@ -771,10 +795,13 @@ function App() {
   }
 
   const loadCategorized = async () => {
-    const rows = await window.api.transactions.listCategorized({
+    const result = await window.api.transactions.listCategorized({
       limit: pageSizeCategorized,
       offset: categorizedPage * pageSizeCategorized,
+      categoryIds: categorizedFilter.length > 0 ? categorizedFilter : undefined,
     })
+    setCategorizedTotal(result.total)
+    const rows = result.rows
     const grouped = new Map<number, CategorizedViewRow>()
     rows.forEach((row) => {
       const existing = grouped.get(row.id)
@@ -829,6 +856,16 @@ function App() {
       }
     }
     setAiSuggestions(map)
+    setSelection((current) => {
+      const next = { ...current }
+      for (const item of suggestions) {
+        const existing = next[item.transactionId] ?? []
+        if (existing.length === 0) {
+          next[item.transactionId] = [item.categoryId]
+        }
+      }
+      return next
+    })
   }
 
   const loadAiSettings = async () => {
@@ -854,14 +891,57 @@ function App() {
     }
   }
 
-  const loadDashboardData = async (month: string) => {
-    if (!month) {
+  const getRangeBounds = (range: 'last1' | 'last3' | 'last6') => {
+    const latest = dashboardMonths[0] ?? dashboardMonth
+    if (!latest) {
+      return null
+    }
+    const [yearStr, monthStr] = latest.split('-')
+    const year = Number(yearStr)
+    const month = Number(monthStr)
+    if (!year || !month) {
+      return null
+    }
+    const monthsBack = range === 'last1' ? 1 : range === 'last3' ? 3 : 6
+    const start = new Date(year, month - 1, 1)
+    start.setMonth(start.getMonth() - (monthsBack - 1))
+    const startMonth = `${start.getFullYear()}-${String(
+      start.getMonth() + 1
+    ).padStart(2, '0')}`
+    return { startMonth, endMonth: latest, monthsBack }
+  }
+
+  const loadDashboardData = async () => {
+    if (dashboardRange === 'month') {
+      if (!dashboardMonth) {
+        return
+      }
+      const [summary, categories, trend] = await Promise.all([
+        window.api.dashboard.summary({ month: dashboardMonth }),
+        window.api.dashboard.categories({ month: dashboardMonth }),
+        window.api.dashboard.trend({ months: 6 }),
+      ])
+      setDashboardSummary(summary)
+      setDashboardCategories(categories)
+      setDashboardTrend([...trend].reverse())
       return
     }
+
+    const bounds = getRangeBounds(dashboardRange)
+    if (!bounds) {
+      return
+    }
+
     const [summary, categories, trend] = await Promise.all([
-      window.api.dashboard.summary({ month }),
-      window.api.dashboard.categories({ month }),
-      window.api.dashboard.trend({ months: 6 }),
+      window.api.dashboard.summaryRange({
+        startMonth: bounds.startMonth,
+        endMonth: bounds.endMonth,
+      }),
+      window.api.dashboard.categoriesRange({
+        startMonth: bounds.startMonth,
+        endMonth: bounds.endMonth,
+      }),
+      window.api.dashboard.trend({ months: bounds.monthsBack }),
     ])
     setDashboardSummary(summary)
     setDashboardCategories(categories)
@@ -879,10 +959,16 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (dashboardMonth) {
-      loadDashboardData(dashboardMonth)
+    if (dashboardRange === 'month' && dashboardMonth) {
+      loadDashboardData()
     }
-  }, [dashboardMonth])
+  }, [dashboardMonth, dashboardRange])
+
+  useEffect(() => {
+    if (dashboardRange !== 'month') {
+      loadDashboardData()
+    }
+  }, [dashboardRange, dashboardMonths])
 
   useEffect(() => {
     if (activeCategories.length > 0 && newRule.categoryId === 0) {
@@ -903,7 +989,39 @@ function App() {
 
   useEffect(() => {
     loadCategorized()
-  }, [categorizedPage, pageSizeCategorized])
+  }, [categorizedPage, pageSizeCategorized, categorizedFilter])
+
+  useEffect(() => {
+    setCategorizedPage(0)
+  }, [categorizedFilter])
+
+  useEffect(() => {
+    const maxPage = Math.max(0, Math.ceil(categories.length / pageSizeCategories) - 1)
+    if (categoriesPage > maxPage) {
+      setCategoriesPage(maxPage)
+    }
+  }, [categories.length, pageSizeCategories, categoriesPage])
+
+  useEffect(() => {
+    const maxPage = Math.max(0, Math.ceil(rules.length / pageSizeRules) - 1)
+    if (rulesPage > maxPage) {
+      setRulesPage(maxPage)
+    }
+  }, [rules.length, pageSizeRules, rulesPage])
+
+  useEffect(() => {
+    const maxPage = Math.max(
+      0,
+      Math.ceil(dashboardSpendCategories.length / pageSizeDashboardCategories) - 1
+    )
+    if (dashboardCategoryPage > maxPage) {
+      setDashboardCategoryPage(maxPage)
+    }
+  }, [
+    dashboardSpendCategories.length,
+    pageSizeDashboardCategories,
+    dashboardCategoryPage,
+  ])
 
   useEffect(() => {
     loadAiSuggestions(uncategorized.map((tx) => tx.id))
@@ -953,6 +1071,8 @@ function App() {
       loadTransactions()
       loadUncategorized()
       loadCategorized()
+      loadDashboardMonths()
+      loadDashboardData()
     } else {
       setStatus(`Import failed: ${result.error ?? 'Unknown error'}`)
     }
@@ -1070,8 +1190,9 @@ function App() {
       priority: 100,
       isActive: 1,
     })
+    await applyRules()
     setRuleMenuOpen((current) => ({ ...current, [tx.id]: false }))
-    setRulesStatusModal('Rule created from payee.')
+    setRulesStatusModal('Rule created from payee and applied.')
   }
 
   const saveRuleDraft = async () => {
@@ -1088,6 +1209,7 @@ function App() {
     })
 
     setRuleDraft(null)
+    await applyRules()
   }
 
   const applyRules = async () => {
@@ -1104,6 +1226,14 @@ function App() {
     new Intl.NumberFormat('de-DE', {
       style: 'currency',
       currency: 'EUR',
+    }).format(value)
+
+  const formatCompactCurrency = (value: number) =>
+    new Intl.NumberFormat('de-DE', {
+      style: 'currency',
+      currency: 'EUR',
+      notation: 'compact',
+      maximumFractionDigits: 1,
     }).format(value)
 
   const suggestWithAi = async () => {
@@ -1166,7 +1296,8 @@ function App() {
       priority: newRule.priority,
       isActive: newRule.isActive,
     })
-    setRulesStatusModal('Rule created.')
+    await applyRules()
+    setRulesStatusModal('Rule created and applied.')
     setNewRuleModalOpen(false)
     loadRules()
   }
@@ -1239,6 +1370,7 @@ function App() {
                   <select
                     value={dashboardMonth}
                     onChange={(event) => setDashboardMonth(event.target.value)}
+                    disabled={dashboardRange !== 'month'}
                   >
                     {dashboardMonths.length === 0 && (
                       <option value="">No data</option>
@@ -1250,7 +1382,27 @@ function App() {
                     ))}
                   </select>
                 </label>
-                <button onClick={() => loadDashboardData(dashboardMonth)}>
+                <label className="picker">
+                  Range
+                  <select
+                    value={dashboardRange}
+                    onChange={(event) =>
+                      setDashboardRange(
+                        event.target.value as
+                          | 'month'
+                          | 'last1'
+                          | 'last3'
+                          | 'last6'
+                      )
+                    }
+                  >
+                    <option value="month">Selected month</option>
+                    <option value="last1">Last month</option>
+                    <option value="last3">Last 3 months</option>
+                    <option value="last6">Last 6 months</option>
+                  </select>
+                </label>
+                <button onClick={() => loadDashboardData()}>
                   Refresh
                 </button>
               </div>
@@ -1304,7 +1456,16 @@ function App() {
                         <ResponsiveContainer width="100%" height={260}>
                           <BarChart data={dashboardSpendCategories}>
                             <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="categoryName" />
+                            <XAxis
+                              dataKey="categoryName"
+                              interval={0}
+                              angle={0}
+                              textAnchor="middle"
+                              height={40}
+                              tickFormatter={(value: string) =>
+                                value.length > 12 ? `${value.slice(0, 12)}…` : value
+                              }
+                            />
                             <YAxis />
                             <Tooltip
                               formatter={(value: number) => formatCurrency(value)}
@@ -1316,6 +1477,18 @@ function App() {
                                   fill={entry.categoryColor ?? '#2b4cff'}
                                 />
                               ))}
+                              <LabelList
+                                dataKey="totalSpend"
+                                position="top"
+                                fill="#f0f0f0"
+                                formatter={(value: number, entry: any, index: number) =>
+                                  index < 10
+                                    ? `${entry.categoryName} ${formatCompactCurrency(
+                                        value
+                                      )}`
+                                    : ''
+                                }
+                              />
                             </Bar>
                           </BarChart>
                         </ResponsiveContainer>
@@ -1359,6 +1532,39 @@ function App() {
                 <div className="chart-card">
                   <div className="card-header">
                     <h3>Transactions per category</h3>
+                    <div className="actions">
+                      <button
+                        onClick={() => setDashboardCategoryPage(0)}
+                        disabled={dashboardCategoryPage === 0}
+                      >
+                        First
+                      </button>
+                      <button
+                        onClick={() =>
+                          setDashboardCategoryPage((p) => Math.max(0, p - 1))
+                        }
+                        disabled={dashboardCategoryPage === 0}
+                      >
+                        Prev
+                      </button>
+                      <span className="page-indicator">
+                        Page{' '}
+                        {dashboardSpendCategories.length === 0
+                          ? 0
+                          : dashboardCategoryPage + 1}
+                      </span>
+                      <button
+                        onClick={() => setDashboardCategoryPage((p) => p + 1)}
+                        disabled={
+                          dashboardSpendCategories.length === 0 ||
+                          (dashboardCategoryPage + 1) *
+                            pageSizeDashboardCategories >=
+                            dashboardSpendCategories.length
+                        }
+                      >
+                        Next
+                      </button>
+                    </div>
                   </div>
                   {dashboardSpendCategories.length === 0 ? (
                     <div className="muted">No categorized transactions yet.</div>
@@ -1373,7 +1579,7 @@ function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {dashboardSpendCategories.map((row) => (
+                          {pagedDashboardCategories.map((row) => (
                             <tr key={row.categoryId}>
                               <td>
                                 <span
@@ -1391,6 +1597,9 @@ function App() {
                           ))}
                         </tbody>
                       </table>
+                      <div className="data-table-footer">
+                        Total: {dashboardSpendCategories.length}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1449,12 +1658,12 @@ function App() {
                   </button>
                 </div>
               </div>
-            <DataTable
-              data={transactions}
-              columns={transactionColumns}
-              getRowId={(row) => String(row.id)}
-              emptyMessage="No transactions yet."
-            />
+                <DataTable
+                  data={transactions}
+                  columns={transactionColumns}
+                  getRowId={(row) => String(row.id)}
+                  emptyMessage="No transactions yet."
+                />
             </div>
           </>
         )}
@@ -1595,20 +1804,27 @@ function App() {
                     >
                       Prev
                     </button>
-                    <span className="page-indicator">Page {categorizedPage + 1}</span>
-                  <button
-                    onClick={() => setCategorizedPage((p) => p + 1)}
-                    disabled={categorized.length < pageSizeCategorized}
-                  >
-                    Next
-                  </button>
+                    <span className="page-indicator">
+                      Page {categorizedTotal === 0 ? 0 : categorizedPage + 1}
+                    </span>
+                    <button
+                      onClick={() => setCategorizedPage((p) => p + 1)}
+                      disabled={
+                        categorizedTotal === 0 ||
+                        (categorizedPage + 1) * pageSizeCategorized >=
+                          categorizedTotal
+                      }
+                    >
+                      Next
+                    </button>
                     <button onClick={loadCategorized}>Refresh</button>
                   </div>
                 </div>
                 <DataTable
-                  data={filteredCategorized}
+                  data={categorized}
                   columns={categorizedColumns}
                   getRowId={(row) => String(row.id)}
+                  totalCount={categorizedTotal}
                   emptyMessage="No categorized transactions yet."
                 />
               </>
@@ -1617,20 +1833,45 @@ function App() {
         )}
         {activeView === 'categories' && (
           <div className="card">
-            <div className="card-header">
+              <div className="card-header">
               <h2>Categories</h2>
               <div className="actions">
                 <button onClick={() => setNewCategoryModalOpen(true)}>
                   Add Category
                 </button>
                 <button onClick={loadCategories}>Refresh</button>
+                <button
+                  onClick={() => setCategoriesPage(0)}
+                  disabled={categoriesPage === 0}
+                >
+                  First
+                </button>
+                <button
+                  onClick={() => setCategoriesPage((p) => Math.max(0, p - 1))}
+                  disabled={categoriesPage === 0}
+                >
+                  Prev
+                </button>
+                <span className="page-indicator">
+                  Page {categories.length === 0 ? 0 : categoriesPage + 1}
+                </span>
+                <button
+                  onClick={() => setCategoriesPage((p) => p + 1)}
+                  disabled={
+                    categories.length === 0 ||
+                    (categoriesPage + 1) * pageSizeCategories >= categories.length
+                  }
+                >
+                  Next
+                </button>
               </div>
             </div>
             {categoryStatus && <div className="status">{categoryStatus}</div>}
             <DataTable
-              data={categories}
+              data={pagedCategories}
               columns={categoryColumns}
               getRowId={(row) => String(row.id)}
+              totalCount={categories.length}
               meta={{
                 categoryEdits,
                 setCategoryEdits,
@@ -1648,12 +1889,37 @@ function App() {
               <div className="actions">
                 <button onClick={() => setNewRuleModalOpen(true)}>Add Rule</button>
                 <button onClick={loadRules}>Refresh</button>
+                <button
+                  onClick={() => setRulesPage(0)}
+                  disabled={rulesPage === 0}
+                >
+                  First
+                </button>
+                <button
+                  onClick={() => setRulesPage((p) => Math.max(0, p - 1))}
+                  disabled={rulesPage === 0}
+                >
+                  Prev
+                </button>
+                <span className="page-indicator">
+                  Page {rules.length === 0 ? 0 : rulesPage + 1}
+                </span>
+                <button
+                  onClick={() => setRulesPage((p) => p + 1)}
+                  disabled={
+                    rules.length === 0 ||
+                    (rulesPage + 1) * pageSizeRules >= rules.length
+                  }
+                >
+                  Next
+                </button>
               </div>
             </div>
             <DataTable
-              data={rules}
+              data={pagedRules}
               columns={rulesColumns}
               getRowId={(row) => String(row.id)}
+              totalCount={rules.length}
               emptyMessage="No rules yet."
             />
           </div>

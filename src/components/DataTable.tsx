@@ -12,6 +12,7 @@ type DataTableProps<T> = {
   emptyMessage?: string
   getRowId?: (row: T, index: number) => string
   meta?: Record<string, unknown>
+  totalCount?: number
 }
 
 export function DataTable<T>({
@@ -21,6 +22,7 @@ export function DataTable<T>({
   emptyMessage = 'No data.',
   getRowId,
   meta,
+  totalCount,
 }: DataTableProps<T>) {
   const table = useReactTable({
     data,
@@ -67,6 +69,9 @@ export function DataTable<T>({
           )}
         </tbody>
         </table>
+      </div>
+      <div className="data-table-footer">
+        Total: {totalCount ?? data.length}
       </div>
     </div>
   )

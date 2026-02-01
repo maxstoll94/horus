@@ -879,6 +879,56 @@ function getDashboardSummary(month) {
   }
   return row;
 }
+function getDashboardSummaryRange(startMonth, endMonth) {
+  const db = initializeDatabase();
+  const row = db.prepare(
+    `
+        SELECT
+          ? as month,
+          COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) as totalIncome,
+          COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END), 0) as totalSpend,
+          COALESCE(SUM(amount), 0) as net,
+          COUNT(1) as transactionCount,
+          (
+            SELECT COUNT(DISTINCT t2.id)
+            FROM transactions t2
+            INNER JOIN transaction_categories tc2
+              ON tc2.transaction_id = t2.id
+            WHERE substr(t2.booking_date, 1, 7) BETWEEN ? AND ?
+          ) as categorizedCount,
+          (
+            SELECT COUNT(1)
+            FROM transactions t3
+            LEFT JOIN transaction_categories tc3
+              ON tc3.transaction_id = t3.id
+            WHERE tc3.transaction_id IS NULL
+              AND substr(t3.booking_date, 1, 7) BETWEEN ? AND ?
+          ) as uncategorizedCount
+        FROM transactions t
+        WHERE substr(t.booking_date, 1, 7) BETWEEN ? AND ?
+      `
+  ).get(
+    `${startMonth} to ${endMonth}`,
+    startMonth,
+    endMonth,
+    startMonth,
+    endMonth,
+    startMonth,
+    endMonth
+  );
+  if (!row) {
+    return {
+      month: `${startMonth} to ${endMonth}`,
+      totalIncome: 0,
+      totalSpend: 0,
+      net: 0,
+      transactionCount: 0,
+      categorizedCount: 0,
+      uncategorizedCount: 0
+    };
+  }
+  return row;
+}
 function listDashboardCategorySpend(month) {
   const db = initializeDatabase();
   const rows = db.prepare(
@@ -900,6 +950,29 @@ function listDashboardCategorySpend(month) {
         ORDER BY totalSpend DESC, c.name ASC
       `
   ).all(month);
+  return rows;
+}
+function listDashboardCategorySpendRange(startMonth, endMonth) {
+  const db = initializeDatabase();
+  const rows = db.prepare(
+    `
+        SELECT
+          c.id as categoryId,
+          c.name as categoryName,
+          c.color as categoryColor,
+          COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END), 0) as totalSpend,
+          COUNT(1) as transactionCount
+        FROM transaction_categories tc
+        INNER JOIN transactions t
+          ON t.id = tc.transaction_id
+        INNER JOIN categories c
+          ON c.id = tc.category_id
+        WHERE substr(t.booking_date, 1, 7) BETWEEN ? AND ?
+          AND t.amount < 0
+        GROUP BY c.id, c.name, c.color
+        ORDER BY totalSpend DESC, c.name ASC
+      `
+  ).all(startMonth, endMonth);
   return rows;
 }
 function listDashboardTrend(months = 6) {
@@ -988,8 +1061,29 @@ function listCategorizedTransactions(filters = {}) {
   const db = initializeDatabase();
   const limit = filters.limit ?? 200;
   const offset = filters.offset ?? 0;
+  const categoryIds = Array.isArray(filters.categoryIds) ? filters.categoryIds.filter((id) => Number.isInteger(id)) : [];
+  const filterClause = categoryIds.length > 0 ? `WHERE tc.category_id IN (${categoryIds.map(() => "?").join(",")})` : "";
+  const total = db.prepare(
+    `
+        SELECT COUNT(DISTINCT t.id) as total
+        FROM transactions t
+        INNER JOIN transaction_categories tc
+          ON tc.transaction_id = t.id
+        ${filterClause}
+      `
+  ).get(...categoryIds);
   const rows = db.prepare(
     `
+        WITH page_ids AS (
+          SELECT t.id
+          FROM transactions t
+          INNER JOIN transaction_categories tc
+            ON tc.transaction_id = t.id
+          ${filterClause}
+          GROUP BY t.id
+          ORDER BY t.booking_date DESC, t.id DESC
+          LIMIT ? OFFSET ?
+        )
         SELECT
           t.id,
           t.booking_date as bookingDate,
@@ -1009,11 +1103,11 @@ function listCategorizedTransactions(filters = {}) {
           ON tc.transaction_id = t.id
         INNER JOIN categories c
           ON c.id = tc.category_id
+        WHERE t.id IN (SELECT id FROM page_ids)
         ORDER BY t.booking_date DESC, t.id DESC
-        LIMIT ? OFFSET ?
       `
-  ).all(limit, offset);
-  return rows;
+  ).all(...categoryIds, limit, offset);
+  return { rows, total: total?.total ?? 0 };
 }
 function removeTransactionCategory(transactionId, categoryId) {
   const db = initializeDatabase();
@@ -3361,6 +3455,22 @@ app.whenReady().then(() => {
       return [];
     }
     return listDashboardCategorySpend(month);
+  });
+  ipcMain.handle("dashboard:summary:range", (_event, payload) => {
+    const startMonth = typeof payload?.startMonth === "string" ? payload.startMonth : "";
+    const endMonth = typeof payload?.endMonth === "string" ? payload.endMonth : "";
+    if (!startMonth || !endMonth) {
+      return null;
+    }
+    return getDashboardSummaryRange(startMonth, endMonth);
+  });
+  ipcMain.handle("dashboard:categories:range", (_event, payload) => {
+    const startMonth = typeof payload?.startMonth === "string" ? payload.startMonth : "";
+    const endMonth = typeof payload?.endMonth === "string" ? payload.endMonth : "";
+    if (!startMonth || !endMonth) {
+      return [];
+    }
+    return listDashboardCategorySpendRange(startMonth, endMonth);
   });
   ipcMain.handle("dashboard:trend", (_event, payload) => {
     const months = Number(payload?.months) || 6;

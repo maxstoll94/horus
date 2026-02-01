@@ -36,7 +36,11 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('transactions:list', filters),
     listUncategorized: (filters?: { limit?: number; offset?: number }) =>
       ipcRenderer.invoke('transactions:uncategorized', filters),
-    listCategorized: (filters?: { limit?: number; offset?: number }) =>
+    listCategorized: (filters?: {
+      limit?: number
+      offset?: number
+      categoryIds?: number[]
+    }) =>
       ipcRenderer.invoke('transactions:categorized', filters),
     addCategory: (payload: { transactionId: number; categoryId: number }) =>
       ipcRenderer.invoke('transactions:add-category', payload),
@@ -108,6 +112,10 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('dashboard:summary', payload),
     categories: (payload: { month: string }) =>
       ipcRenderer.invoke('dashboard:categories', payload),
+    summaryRange: (payload: { startMonth: string; endMonth: string }) =>
+      ipcRenderer.invoke('dashboard:summary:range', payload),
+    categoriesRange: (payload: { startMonth: string; endMonth: string }) =>
+      ipcRenderer.invoke('dashboard:categories:range', payload),
     trend: (payload?: { months?: number }) =>
       ipcRenderer.invoke('dashboard:trend', payload ?? {}),
   },
