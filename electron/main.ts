@@ -17,9 +17,11 @@ import {
   listAiRequests,
   getAiSuggestionsForTransactions,
   getDashboardSummary,
+  getDashboardSummaryRange,
   insertImport,
   insertTransactions,
   listDashboardCategorySpend,
+  listDashboardCategorySpendRange,
   listDashboardMonths,
   listDashboardTrend,
   listCategories,
@@ -195,6 +197,26 @@ app.whenReady().then(() => {
       return []
     }
     return listDashboardCategorySpend(month)
+  })
+  ipcMain.handle('dashboard:summary:range', (_event, payload) => {
+    const startMonth =
+      typeof payload?.startMonth === 'string' ? payload.startMonth : ''
+    const endMonth =
+      typeof payload?.endMonth === 'string' ? payload.endMonth : ''
+    if (!startMonth || !endMonth) {
+      return null
+    }
+    return getDashboardSummaryRange(startMonth, endMonth)
+  })
+  ipcMain.handle('dashboard:categories:range', (_event, payload) => {
+    const startMonth =
+      typeof payload?.startMonth === 'string' ? payload.startMonth : ''
+    const endMonth =
+      typeof payload?.endMonth === 'string' ? payload.endMonth : ''
+    if (!startMonth || !endMonth) {
+      return []
+    }
+    return listDashboardCategorySpendRange(startMonth, endMonth)
   })
   ipcMain.handle('dashboard:trend', (_event, payload) => {
     const months = Number(payload?.months) || 6
