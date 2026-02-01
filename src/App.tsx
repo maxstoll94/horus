@@ -465,29 +465,33 @@ function App() {
         ),
       },
       {
-        id: 'add',
-        header: '',
+        id: 'actions',
+        header: 'Actions',
         cell: ({ row }) => (
           <div className="rule-actions">
             <button
+              className="rule-action"
               onClick={() => assignCategory(row.original.id)}
               disabled={(selection[row.original.id] ?? []).length === 0}
             >
-              Add
+              <span className="rule-icon rule-icon-add" aria-hidden="true" />
+              <span className="rule-action-text">
+                <strong>Add</strong>
+                <span className="rule-action-sub">Category</span>
+              </span>
             </button>
+            <span className="rule-action-separator" aria-hidden="true" />
             <button
+              className="rule-action rule-action-remove"
               onClick={() => deleteTransactionRow(row.original.id)}
             >
-              Remove
+              <span className="rule-icon rule-icon-remove" aria-hidden="true" />
+              <span className="rule-action-text">
+                <strong>Remove</strong>
+                <span className="rule-action-sub">Transaction</span>
+              </span>
             </button>
-          </div>
-        ),
-      },
-      {
-        id: 'rule',
-        header: '',
-        cell: ({ row }) => (
-          <div className="rule-actions">
+            <span className="rule-action-separator" aria-hidden="true" />
             <button
               className="rule-action rule-action-quick"
               onClick={() => createRuleFromPayee(row.original)}
