@@ -1,5 +1,6 @@
 import 'dotenv/config'
-import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { readFile } from 'node:fs/promises'
@@ -89,6 +90,61 @@ function createWindow() {
   }
 }
 
+// electron-updater can install updates unattended on Windows, but refuses to
+// on unsigned macOS builds — there it's used for detection only, linking out
+// to the release page instead. Offline use is the norm for this app, so
+// failures (e.g. no network, no GitHub release yet) are logged and ignored.
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = false
+
+  autoUpdater.on('update-available', (info) => {
+    if (process.platform === 'win32') {
+      autoUpdater.downloadUpdate()
+      return
+    }
+
+    dialog
+      .showMessageBox({
+        type: 'info',
+        message: `Horus ${info.version} is available`,
+        detail: 'Download the latest version from GitHub to update.',
+        buttons: ['Download', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      .then(({ response }) => {
+        if (response === 0) {
+          shell.openExternal('https://github.com/maxstoll94/horus/releases/latest')
+        }
+      })
+  })
+
+  autoUpdater.on('update-downloaded', () => {
+    dialog
+      .showMessageBox({
+        type: 'info',
+        message: 'Update ready to install',
+        detail: 'Restart Horus now to finish updating?',
+        buttons: ['Restart', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      .then(({ response }) => {
+        if (response === 0) {
+          autoUpdater.quitAndInstall()
+        }
+      })
+  })
+
+  autoUpdater.on('error', (error) => {
+    console.error('autoUpdater error', error)
+  })
+
+  autoUpdater.checkForUpdates().catch((error) => {
+    console.error('autoUpdater checkForUpdates failed', error)
+  })
+}
+
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
@@ -112,6 +168,9 @@ app.on('activate', () => {
 })
 
 app.whenReady().then(() => {
+  if (app.isPackaged) {
+    setupAutoUpdater()
+  }
   initializeDatabase()
   ipcMain.handle('db:get-info', () => getDatabaseInfo())
   ipcMain.handle('categories:list', (_event, filters) => listCategories(filters))
