@@ -98,13 +98,20 @@ behavior, commands, or architecture changes.
 - Manual transactions: source='manual', raw_hash='manual:<random>'.
 
 ## Category taxonomy (by design — resist sprawl)
-- Categories answer "what KIND of spending" only; ~20 seeded on reset
-  (SEED_CATEGORIES in db.ts). Merchant detail (Netflix, Degiro) lives in
-  rules / future recurring detection; account/direction detail in future
-  accounts layer. Never add merchant- or person-named categories.
-- Reset (Danger Zone) reseeds the taxonomy PLUS starter payee rules
-  (SEED_RULES) for the user's known merchants, so re-import + Apply Rules
-  auto-categorizes most transactions.
+- Categories answer "what KIND of spending" only; 14 seeded on reset
+  (SEED_CATEGORIES in db.ts), kept deliberately lean so the Budget view
+  stays scannable at a glance. Utilities/Internet/Phone are merged into
+  "Utilities & Internet"; Fees & Taxes, Personal Care, and catch-all "Other"
+  fold into "Shopping"; Leisure & Hobbies + Travel & Holidays merge into
+  "Leisure & Travel"; Pension merges into "Investments" (Emergency Fund
+  became the standalone "Savings" bucket). Rent and Savings/Investments stay
+  split out on purpose — those are the lines worth tracking individually.
+  Merchant detail (Netflix, Degiro) lives in rules / future recurring
+  detection; account/direction detail in future accounts layer. Never add
+  merchant- or person-named categories.
+- Reset (Danger Zone) only reseeds SEED_CATEGORIES — no starter payee rules
+  ship with the app (that would mean baking one person's specific merchants
+  into every install); users build their own rules via "Save as Rules".
 - Rules apply first-match-wins ordered by priority DESC (overlapping
   matchers like 'DKB' ⊂ 'DKB AG' resolve via priority 200 > 100).
 - AI chat is instructed to prefer existing categories and never create

@@ -2772,86 +2772,20 @@ export function clearTransactions() {
 // Merchant-level detail (Netflix, Degiro, ...) belongs to rules/recurring
 // detection, direction detail (DKB→ING) to accounts — not to categories.
 const SEED_CATEGORIES: Array<[name: string, color: string, groupType: string]> = [
-  ['Salary',                '#4f46e5', 'income'],
-  ['Other Income',          '#6fd1ff', 'income'],
-  ['Rent',                  '#6366f1', 'fixed_expense'],
-  ['Utilities',             '#0ea5e9', 'fixed_expense'],
-  ['Internet & Phone',      '#06b6d4', 'fixed_expense'],
-  ['Insurance',             '#8b5cf6', 'fixed_expense'],
-  ['Subscriptions',         '#f43f5e', 'fixed_expense'],
-  ['Transport',             '#14b8a6', 'fixed_expense'],
-  ['Fees & Taxes',          '#ff7a7a', 'fixed_expense'],
-  ['Groceries',             '#7ddc7d', 'variable_expense'],
-  ['Eating & Drinking Out', '#f59e0b', 'variable_expense'],
-  ['Shopping',              '#ec4899', 'variable_expense'],
-  ['Personal Care',         '#a78bfa', 'variable_expense'],
-  ['Leisure & Hobbies',     '#ffb3c6', 'variable_expense'],
-  ['Travel & Holidays',     '#3b82f6', 'variable_expense'],
-  ['Other',                 '#9ca3af', 'variable_expense'],
-  ['Investments',           '#059669', 'savings'],
-  ['Pension',               '#0891b2', 'savings'],
-  ['Emergency Fund',        '#10b981', 'savings'],
-  ['Transfer',              '#9aa0a6', 'transfer'],
-]
-
-// Starter rules for known payees so a fresh import auto-categorizes.
-// Higher priority wins (rules apply first-match); overrides sit at 200 where
-// a payee is a substring of another (e.g. 'DKB' ⊂ 'DKB AG').
-const SEED_RULES: Array<[
-  operator: 'contains' | 'equals',
-  value: string,
-  category: string,
-  priority: number,
-]> = [
-  // Transfers between own accounts / credit card settlements
-  ['contains', 'REDACTED_NAME',            'Transfer',              200],
-  ['contains', 'REDACTED_NAME',      'Transfer',              100],
-  ['contains', 'Deutsche Kreditbank',   'Transfer',              100],
-  ['equals',   'DKB',                   'Transfer',              100],
-  ['contains', 'Ausgleich Kreditkarte', 'Transfer',              100],
-  // Income
-  ['contains', 'REDACTED_EMPLOYER',              'Salary',                100],
-  ['contains', 'REDACTED_PERSON',        'Other Income',          100],
-  // Fixed
-  ['contains', 'REDACTED_LANDLORD',              'Rent',                  100],
-  ['contains', 'VITENS',                'Utilities',             100],
-  ['contains', 'Budget Energie',        'Utilities',             100],
-  ['contains', 'Budget Internet',       'Internet & Phone',      100],
-  ['contains', 'Youfone',               'Internet & Phone',      100],
-  ['contains', 'Zilveren Kruis',        'Insurance',             100],
-  ['contains', 'ANWB Verzekeren',       'Insurance',             100],
-  ['contains', 'Netflix',               'Subscriptions',         100],
-  ['contains', 'Spotify',               'Subscriptions',         100],
-  ['contains', 'NS GROEP',              'Transport',             100],
-  ['contains', 'Shell',                 'Transport',             100],
-  ['contains', 'Avis Budget',           'Transport',             100],
-  ['contains', 'TERGOOI',               'Transport',             100],
-  ['contains', 'DKB AG',                'Fees & Taxes',          200],
-  ['contains', 'OranjePakket',          'Fees & Taxes',          100],
-  ['contains', 'tweede rekeninghouder', 'Fees & Taxes',          100],
-  ['contains', 'Buitenlandtoeslag',     'Fees & Taxes',          100],
-  ['contains', 'Gemeente',              'Fees & Taxes',          100],
-  // Variable
-  ['contains', 'Albert Heijn',          'Groceries',             100],
-  ['contains', 'BCK.AH',                'Groceries',             100],
-  ['contains', 'Dirk vdBroek',          'Groceries',             100],
-  ['contains', 'Joop Sjouwerman',       'Groceries',             100],
-  ['contains', 'REWE',                  'Groceries',             100],
-  ['contains', 'Hello Fresh',           'Groceries',             100],
-  ['contains', 'HelloFresh',            'Groceries',             100],
-  ['contains', 'Starbucks',             'Eating & Drinking Out', 100],
-  ['contains', 'McDonald',              'Eating & Drinking Out', 100],
-  ['contains', 'MISTERRAMEN',           'Eating & Drinking Out', 100],
-  ['contains', 'Takeaway.com',          'Eating & Drinking Out', 100],
-  ['contains', 'Vishandel',             'Eating & Drinking Out', 100],
-  ['contains', 'De Huismeesters',       'Eating & Drinking Out', 100],
-  ['contains', 'Kruidvat',              'Personal Care',         100],
-  ['contains', 'Etos',                  'Personal Care',         100],
-  ['contains', 'Amazon',                'Shopping',              100],
-  ['contains', 'FLATEXDEGIRO',          'Investments',           100],
-  // NOTE: Brand New Day serves both Investments and Pension — payee is
-  // identical, so pension transfers need manual recategorization.
-  ['contains', 'Brand New Day',         'Investments',           100],
+  ['Salary',              '#4f46e5', 'income'],
+  ['Other Income',        '#6fd1ff', 'income'],
+  ['Rent',                '#6366f1', 'fixed_expense'],
+  ['Utilities & Internet','#0ea5e9', 'fixed_expense'],
+  ['Insurance',           '#8b5cf6', 'fixed_expense'],
+  ['Subscriptions',       '#f43f5e', 'fixed_expense'],
+  ['Groceries',           '#7ddc7d', 'variable_expense'],
+  ['Transport',           '#14b8a6', 'variable_expense'],
+  ['Dining Out',          '#f59e0b', 'variable_expense'],
+  ['Shopping',            '#ec4899', 'variable_expense'],
+  ['Leisure & Travel',    '#3b82f6', 'variable_expense'],
+  ['Savings',             '#10b981', 'savings'],
+  ['Investments',         '#059669', 'savings'],
+  ['Transfer',            '#9aa0a6', 'transfer'],
 ]
 
 export function clearAndResetData() {
@@ -2881,14 +2815,6 @@ export function clearAndResetData() {
     SEED_CATEGORIES.forEach(([name, color, groupType], index) => {
       insertCategory.run(name, color, groupType, index)
     })
-
-    const insertRule = db.prepare(`
-      INSERT INTO rules (matcher_type, matcher_operator, matcher_value, category_id, priority, is_active)
-      SELECT 'payee', ?, ?, id, ?, 1 FROM categories WHERE name = ?
-    `)
-    for (const [operator, value, category, priority] of SEED_RULES) {
-      insertRule.run(operator, value, priority, category)
-    }
   })()
 }
 
