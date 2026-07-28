@@ -11,11 +11,25 @@
     "dist",
     "dist-electron"
   ],
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "maxstoll94",
+      "repo": "horus"
+    }
+  ],
   "mac": {
     "target": [
-      "dmg"
+      {
+        "target": "dmg",
+        "arch": ["arm64", "x64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["arm64", "x64"]
+      }
     ],
-    "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
+    "artifactName": "${productName}-Mac-${version}-${arch}.${ext}"
   },
   "win": {
     "icon": "public/horus-icon.ico",

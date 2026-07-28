@@ -1,5 +1,5 @@
 import { parse } from 'csv-parse/sync'
-import type { ImportResult, ParsedTransaction, RawRecord } from './types'
+import type { ImportResult, OwnAccount, ParsedTransaction, RawRecord } from './types'
 import {
   buildHeaderMap,
   getHeaderValue,
@@ -51,9 +51,26 @@ function extractField(
   return value ? value : null
 }
 
+// ING mutation codes → readable payment method (strong categorization signal:
+// direct debits are recurring bills, card terminals are in-person purchases).
+const ING_CODE_METHODS: Record<string, string> = {
+  IC: 'direct debit',
+  BA: 'card terminal',
+  GT: 'online banking',
+  OV: 'transfer',
+  PO: 'standing order',
+  GM: 'ATM',
+  ST: 'deposit',
+  VZ: 'batch payment',
+  FL: 'branch booking',
+  DV: 'miscellaneous',
+}
+
 function parseIngRecords(records: RawRecord[]): ImportResult {
   const warnings: string[] = []
   const transactions: ParsedTransaction[] = []
+  const accountCounts = new Map<string, number>()
+  const balancesByDate = new Map<string, number[]>()
 
   records.forEach((record, index) => {
     const map = buildHeaderMap(record)
@@ -73,6 +90,10 @@ function parseIngRecords(records: RawRecord[]): ImportResult {
       getHeaderValue(record, map, ['Currency'])?.trim() || 'EUR'
     const account =
       getHeaderValue(record, map, ['Account', 'Account number'])?.trim() || null
+    const code = getHeaderValue(record, map, ['Code'])?.trim().toUpperCase() || null
+    const transactionType =
+      getHeaderValue(record, map, ['Transaction type', 'Mutatiesoort'])?.trim() || null
+    const method = (code && ING_CODE_METHODS[code]) || transactionType || code
     const payee =
       getHeaderValue(record, map, ['Name / Description', 'Name/Description'])?.trim() ||
       null
@@ -125,6 +146,18 @@ function parseIngRecords(records: RawRecord[]): ImportResult {
       amount = Math.abs(amountValue)
     }
 
+    if (account) {
+      accountCounts.set(account, (accountCounts.get(account) ?? 0) + 1)
+    }
+    const resultingBalance = parseEuroAmount(
+      getHeaderValue(record, map, ['Resulting balance', 'Saldo na mutatie', 'Balance'])
+    )
+    if (resultingBalance !== null) {
+      const list = balancesByDate.get(bookingDate) ?? []
+      list.push(resultingBalance)
+      balancesByDate.set(bookingDate, list)
+    }
+
     const rawHash = makeRawHash([
       bookingDate,
       valueDate,
@@ -147,11 +180,34 @@ function parseIngRecords(records: RawRecord[]): ImportResult {
       iban,
       bic: null,
       reference,
+      method,
       rawHash,
     })
   })
 
-  return { transactions, warnings }
+  // The ING export lists the owner's IBAN per row; the dominant value is the
+  // statement's own account (counterparties live in a separate column).
+  let ownAccount: OwnAccount | null = null
+  let bestCount = 0
+  for (const [identifier, count] of accountCounts) {
+    if (count > bestCount) {
+      bestCount = count
+      ownAccount = { identifier, kind: 'checking' }
+    }
+  }
+  // Balance-after-transaction is only a safe anchor when the newest booking
+  // date has a single row — with several same-day rows we can't tell which
+  // balance is end-of-day.
+  if (ownAccount && balancesByDate.size > 0) {
+    const maxDate = [...balancesByDate.keys()].sort().pop() as string
+    const balances = balancesByDate.get(maxDate) ?? []
+    if (balances.length === 1) {
+      ownAccount.balance = balances[0]
+      ownAccount.balanceDate = maxDate
+    }
+  }
+
+  return { transactions, warnings, ownAccount }
 }
 
 export function parseIngCsv(contents: string): ImportResult {

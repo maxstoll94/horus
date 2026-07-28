@@ -1,20 +1,22 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
 import Select from 'react-select'
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Customized,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
+import CreatableSelect from 'react-select/creatable'
 import './App.css'
 import horusLogo from './assets/horus-logo-v2.svg'
-import { DataTable } from './components/DataTable'
+import { DashboardView } from './views/DashboardView'
+import { TransactionsView } from './views/TransactionsView'
+import { CategorizationView } from './views/CategorizationView'
+import { CategoriesView } from './views/CategoriesView'
+import { RulesView } from './views/RulesView'
+import { TagsView } from './views/TagsView'
+import { AccountsView } from './views/AccountsView'
+import { AiSettingsView } from './views/AiSettingsView'
+import { DocsView } from './views/DocsView'
+import { BudgetView } from './views/BudgetView'
+import { ChatView } from './views/ChatView'
+import type { AccountOption, AccountRow, TagRow } from './types'
+import { multiSelectStyles } from './lib/reactSelectStyles'
 
 type TransactionRow = {
   id: number
@@ -24,6 +26,10 @@ type TransactionRow = {
   payee: string | null
   purpose: string | null
   categoryCount: number
+  source: string
+  accountName?: string | null
+  iban?: string | null
+  method?: string | null
 }
 
 type RuleRow = {
@@ -34,6 +40,7 @@ type RuleRow = {
   categoryId: number
   priority: number
   isActive: number
+  tagIds: number[]
 }
 
 type CategoryRow = {
@@ -41,6 +48,8 @@ type CategoryRow = {
   name: string
   color: string | null
   isActive: number
+  groupType: string
+  displayOrder: number
 }
 
 type CategorizedViewRow = TransactionRow & {
@@ -55,9 +64,15 @@ type RuleDraft = {
   categoryId: number
   priority: number
   isActive: number
+  tagIds: number[]
 }
 
 type CategoryOption = {
+  value: number
+  label: string
+}
+
+type TagOption = {
   value: number
   label: string
 }
@@ -93,41 +108,91 @@ type CategoryTableMeta = {
   deleteCategoryRow: (id: number) => void
 }
 
+type TagTableMeta = {
+  tagEdits: Record<number, { name: string }>
+  setTagEdits: React.Dispatch<React.SetStateAction<Record<number, { name: string }>>>
+  saveTagRow: (id: number) => void
+  deleteTagRow: (id: number) => void
+}
+
+type RuleEditDraft = {
+  matcherType: string
+  matcherOperator: string
+  matcherValue: string
+  categoryId: number
+  priority: number
+  isActive: number
+  tagIds: number[]
+}
+
 type RuleTableMeta = {
-  ruleEdits: Record<
-    number,
-    {
-      matcherType: string
-      matcherOperator: string
-      matcherValue: string
-      categoryId: number
-      priority: number
-      isActive: number
-    }
-  >
-  setRuleEdits: React.Dispatch<
-    React.SetStateAction<
-      Record<
-        number,
-        {
-          matcherType: string
-          matcherOperator: string
-          matcherValue: string
-          categoryId: number
-          priority: number
-          isActive: number
-        }
-      >
-    >
-  >
+  ruleEdits: Record<number, RuleEditDraft>
+  setRuleEdits: React.Dispatch<React.SetStateAction<Record<number, RuleEditDraft>>>
   activeCategories: CategoryRow[]
+  tagOptions: TagOption[]
   saveRule: (id: number) => void
   deleteRule: (id: number) => void
 }
 
+type AccountEditDraft = {
+  name: string
+  type: string
+  anchorBalance: string
+  anchorDate: string
+}
+
+type AccountTableMeta = {
+  accountEdits: Record<number, AccountEditDraft>
+  setAccountEdits: React.Dispatch<React.SetStateAction<Record<number, AccountEditDraft>>>
+  saveAccount: (id: number) => void
+  deleteAccountRow: (id: number) => void
+}
+
+const draftFromAccount = (account: AccountRow): AccountEditDraft => ({
+  name: account.name,
+  type: account.type,
+  anchorBalance: account.anchorBalance != null ? String(account.anchorBalance) : '',
+  anchorDate: account.anchorDate ?? '',
+})
+
+const formatEur = (value: number) =>
+  new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(value)
+
+function sameTagIds(a: number[], b: number[]) {
+  if (a.length !== b.length) return false
+  const setB = new Set(b)
+  return a.every((id) => setB.has(id))
+}
+
+// Tags have no stored color (unlike categories), so bars are colored from a
+// validated categorical palette, picked deterministically by tag id so a
+// given tag's color stays stable across reloads regardless of sort order.
+const TAG_COLOR_PALETTE = [
+  '#2a78d6',
+  '#1baf7a',
+  '#eda100',
+  '#008300',
+  '#4a3aa7',
+  '#e34948',
+  '#e87ba4',
+  '#eb6834',
+]
+const tagColor = (tagId: number) => TAG_COLOR_PALETTE[tagId % TAG_COLOR_PALETTE.length]
+
+type DashboardBreakdownRow = {
+  id: number
+  name: string
+  color: string | null
+  totalSpend: number
+  totalIncome: number
+  transactionCount: number
+}
+
 function App() {
   const [filePath, setFilePath] = useState<string | null>(null)
-  const [importProvider, setImportProvider] = useState<'dkb' | 'ing'>('dkb')
+  const [importProvider, setImportProvider] = useState<
+    'dkb' | 'ing' | 'sparkasse' | 'volksbank'
+  >('dkb')
   const [status, setStatus] = useState<string>('Idle')
   const [warnings, setWarnings] = useState<string[]>([])
   const [transactions, setTransactions] = useState<TransactionRow[]>([])
@@ -161,13 +226,39 @@ function App() {
       }
     >
   >({})
+  const [categorizationVersion, setCategorizationVersion] = useState(0)
   const [activeView, setActiveView] = useState<
-    'dashboard' | 'transactions' | 'categories' | 'categorization' | 'rules' | 'ai'
+    | 'dashboard'
+    | 'budget'
+    | 'transactions'
+    | 'categories'
+    | 'categorization'
+    | 'rules'
+    | 'tags'
+    | 'accounts'
+    | 'ai'
+    | 'docs'
   >('dashboard')
   const [categorizationTab, setCategorizationTab] = useState<
     'uncategorized' | 'categorized'
   >('uncategorized')
   const [page, setPage] = useState(0)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [editingAmountId, setEditingAmountId] = useState<number | null>(null)
+  const [editingAmountValue, setEditingAmountValue] = useState('')
+  const [txTags, setTxTags] = useState<Record<number, Array<{ tagId: number; name: string }>>>({})
+  const [allTags, setAllTags] = useState<TagRow[]>([])
+  const [editingTagsId, setEditingTagsId] = useState<number | null>(null)
+  const [tagInput, setTagInput] = useState('')
+  const [tags, setTags] = useState<TagRow[]>([])
+  const [tagsTotal, setTagsTotal] = useState(0)
+  const [tagSearch, setTagSearch] = useState('')
+  const [tagsPage, setTagsPage] = useState(0)
+  const [pageSizeTags] = useState(16)
+  const [tagStatus, setTagStatus] = useState<string>('')
+  const [tagEdits, setTagEdits] = useState<Record<number, { name: string }>>({})
+  const [newTagModalOpen, setNewTagModalOpen] = useState(false)
+  const [newTagName, setNewTagName] = useState('')
   const [uncategorizedPage, setUncategorizedPage] = useState(0)
   const [categorizedPage, setCategorizedPage] = useState(0)
   const [pageSizeTransactions, setPageSizeTransactions] = useState(20)
@@ -180,7 +271,11 @@ function App() {
   const [pageSizeRules] = useState(16)
   const [pageSizeDashboardTransactions] = useState(7)
   const [selection, setSelection] = useState<Record<number, number[]>>({})
+  const [tagSelection, setTagSelection] = useState<Record<number, number[]>>({})
   const [categorizedFilter, setCategorizedFilter] = useState<number[]>([])
+  const [accounts, setAccounts] = useState<AccountRow[]>([])
+  const [accountEdits, setAccountEdits] = useState<Record<number, AccountEditDraft>>({})
+  const [selectedAccountIds, setSelectedAccountIds] = useState<number[]>([])
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null)
   const [rulesStatus, setRulesStatus] = useState<string>('')
   const [rulesStatusModal, setRulesStatusModal] = useState<string | null>(null)
@@ -191,15 +286,24 @@ function App() {
       { categoryId: number; confidence: number; reason: string | null }
     >
   >({})
+  const [aiTagSuggestions, setAiTagSuggestions] = useState<
+    Record<number, Array<{ tagName: string; confidence: number }>>
+  >({})
   const [aiStatus, setAiStatus] = useState<string>('')
+  const [aiSuggestLoading, setAiSuggestLoading] = useState(false)
   const [aiSettings, setAiSettings] = useState<{
     model: string
     enabled: number
     confidenceThreshold: number
     inputCostPer1M: number | null
     outputCostPer1M: number | null
+    webSearch: number
+    apiKey: string | null
   } | null>(null)
-  const [aiKeyPresent, setAiKeyPresent] = useState<boolean | null>(null)
+  const [aiKeyStatus, setAiKeyStatus] = useState<{
+    present: boolean
+    source: 'settings' | 'env' | null
+  } | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [aiRequests, setAiRequests] = useState<
     Array<{
@@ -216,37 +320,19 @@ function App() {
       createdAt: string
     }>
   >([])
-  const [rules, setRules] = useState<
-    Array<{
-      id: number
-      matcherType: string
-      matcherOperator: string
-      matcherValue: string
-      categoryId: number
-      priority: number
-      isActive: number
-    }>
-  >([])
+  const [aiRequestsTotal, setAiRequestsTotal] = useState(0)
+  const [aiRequestsPage, setAiRequestsPage] = useState(0)
+  const [pageSizeAiRequests] = useState(16)
+  const [rules, setRules] = useState<RuleRow[]>([])
   const [rulesTotal, setRulesTotal] = useState(0)
   const [ruleSearch, setRuleSearch] = useState('')
-  const [ruleEdits, setRuleEdits] = useState<
-    Record<
-      number,
-      {
-        matcherType: string
-        matcherOperator: string
-        matcherValue: string
-        categoryId: number
-        priority: number
-        isActive: number
-      }
-    >
-  >({})
+  const [ruleEdits, setRuleEdits] = useState<Record<number, RuleEditDraft>>({})
   const [newRule, setNewRule] = useState({
     matcherType: 'payee' as RuleDraft['matcherType'],
     matcherOperator: 'contains' as RuleDraft['matcherOperator'],
     matcherValue: '',
     categoryId: 0,
+    tagIds: [] as number[],
     priority: 100,
     isActive: 1,
   })
@@ -255,6 +341,7 @@ function App() {
   const [dashboardRange, setDashboardRange] = useState<
     'month' | 'last1' | 'last3' | 'last6'
   >('month')
+  const [dashboardGroupBy, setDashboardGroupBy] = useState<'category' | 'tag'>('category')
   const [dashboardSummary, setDashboardSummary] = useState<{
     month: string
     totalIncome: number
@@ -274,6 +361,15 @@ function App() {
       categoryColor: string | null
     }>
   >([])
+  const [dashboardTagSpend, setDashboardTagSpend] = useState<
+    Array<{
+      tagId: number
+      tagName: string
+      totalSpend: number
+      totalIncome: number
+      transactionCount: number
+    }>
+  >([])
   const [dashboardCategorySelectionId, setDashboardCategorySelectionId] =
     useState<number | null>(null)
   const [dashboardCategoryTransactions, setDashboardCategoryTransactions] =
@@ -289,8 +385,30 @@ function App() {
     >([])
   const [dashboardCategoryTransactionsTotal, setDashboardCategoryTransactionsTotal] =
     useState(0)
-  const dashboardNetCategories = useMemo(() => {
-    const mapped = dashboardCategories
+  const dashboardBreakdownSource = useMemo<DashboardBreakdownRow[]>(
+    () =>
+      dashboardGroupBy === 'category'
+        ? dashboardCategories.map((row) => ({
+            id: row.categoryId,
+            name: row.categoryName,
+            color: row.categoryColor,
+            totalSpend: row.totalSpend,
+            totalIncome: row.totalIncome,
+            transactionCount: row.transactionCount,
+          }))
+        : dashboardTagSpend.map((row) => ({
+            id: row.tagId,
+            name: row.tagName,
+            color: tagColor(row.tagId),
+            totalSpend: row.totalSpend,
+            totalIncome: row.totalIncome,
+            transactionCount: row.transactionCount,
+          })),
+    [dashboardGroupBy, dashboardCategories, dashboardTagSpend]
+  )
+
+  const dashboardNetBreakdown = useMemo(() => {
+    const mapped = dashboardBreakdownSource
       .map((row) => ({
         ...row,
         net: row.totalIncome - row.totalSpend,
@@ -302,14 +420,14 @@ function App() {
     }))
     withAbs.sort((a, b) => b.netAbs - a.netAbs)
     return withAbs
-  }, [dashboardCategories])
+  }, [dashboardBreakdownSource])
 
-  const selectedDashboardCategory = useMemo(
+  const selectedDashboardBreakdown = useMemo(
     () =>
-      dashboardNetCategories.find(
-        (row) => row.categoryId === dashboardCategorySelectionId
+      dashboardNetBreakdown.find(
+        (row) => row.id === dashboardCategorySelectionId
       ),
-    [dashboardNetCategories, dashboardCategorySelectionId]
+    [dashboardNetBreakdown, dashboardCategorySelectionId]
   )
 
   const activeCategories = useMemo(
@@ -335,9 +453,84 @@ function App() {
     [categoriesAll]
   )
 
+  const accountFilterOptions = useMemo<AccountOption[]>(
+    () =>
+      accounts.map((acct) => ({
+        value: acct.id,
+        label: acct.bank ? `${acct.name} (${acct.bank})` : acct.name,
+      })),
+    [accounts]
+  )
+
+  const tagOptions = useMemo<TagOption[]>(
+    () =>
+      allTags.map((tag) => ({
+        value: tag.id,
+        label: tag.name,
+      })),
+    [allTags]
+  )
+
+  const saveEditingAmount = async (row: TransactionRow) => {
+    const parsed = parseFloat(editingAmountValue.replace(',', '.'))
+    if (!isNaN(parsed)) {
+      await window.api.transactions.update({ id: row.id, amount: parsed })
+      loadTransactions()
+      loadUncategorized()
+      loadCategorized()
+      loadDashboardData()
+    }
+    setEditingAmountId(null)
+  }
+
+  const loadTxTags = async (ids: number[]) => {
+    if (ids.length === 0) {
+      setTxTags({})
+      return
+    }
+    const rows = await window.api.tags.forTransactions({ transactionIds: ids })
+    const map: Record<number, Array<{ tagId: number; name: string }>> = {}
+    for (const row of rows) {
+      if (!map[row.transactionId]) map[row.transactionId] = []
+      map[row.transactionId].push({ tagId: row.tagId, name: row.name })
+    }
+    setTxTags(map)
+  }
+
+  const loadAllTags = async () => {
+    const result = await window.api.tags.list({ limit: 10000 })
+    setAllTags(result.rows)
+  }
+
+  const addTagToTransaction = async (transactionId: number) => {
+    const name = tagInput.trim()
+    if (!name) {
+      setEditingTagsId(null)
+      return
+    }
+    await window.api.tags.addToTransaction({ transactionId, name })
+    setTagInput('')
+    setEditingTagsId(null)
+    loadTxTags(transactions.map((tx) => tx.id))
+    loadAllTags()
+  }
+
+  const removeTagFromTransaction = async (transactionId: number, tagId: number) => {
+    await window.api.tags.removeFromTransaction({ transactionId, tagId })
+    loadTxTags(transactions.map((tx) => tx.id))
+    loadAllTags()
+  }
+
   const transactionColumns = useMemo<ColumnDef<TransactionRow>[]>(
     () => [
       { header: 'Date', accessorKey: 'bookingDate' },
+      {
+        header: 'Account',
+        accessorKey: 'accountName',
+        cell: ({ row }) => (
+          <span className="account-tag">{row.original.accountName ?? '—'}</span>
+        ),
+      },
       {
         header: 'Payee',
         accessorKey: 'payee',
@@ -351,16 +544,78 @@ function App() {
         ),
       },
       {
+        id: 'tags',
+        header: 'Tags',
+        cell: ({ row }) => {
+          const tags = txTags[row.original.id] ?? []
+          return (
+            <span className="tags-cell">
+              {tags.map((tag) => (
+                <span key={tag.tagId} className="tag-chip">
+                  {tag.name}
+                  <button
+                    className="tag-chip-remove"
+                    onClick={() => removeTagFromTransaction(row.original.id, tag.tagId)}
+                    title="Remove tag"
+                  >×</button>
+                </span>
+              ))}
+              {editingTagsId === row.original.id ? (
+                <input
+                  className="tag-input"
+                  autoFocus
+                  list="tag-suggestions"
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') addTagToTransaction(row.original.id)
+                    if (e.key === 'Escape') { setEditingTagsId(null); setTagInput('') }
+                  }}
+                  onBlur={() => addTagToTransaction(row.original.id)}
+                  placeholder="tag…"
+                />
+              ) : (
+                <button
+                  className="tag-add-btn"
+                  onClick={() => { setEditingTagsId(row.original.id); setTagInput('') }}
+                  title="Add tag"
+                >+</button>
+              )}
+            </span>
+          )
+        },
+      },
+      {
         header: 'Amount',
         accessorKey: 'amount',
-        cell: ({ row }) => (
-          <span className="amount">
-            {row.original.amount.toFixed(2)} {row.original.currency}
-          </span>
-        ),
+        cell: ({ row }) =>
+          editingAmountId === row.original.id ? (
+            <input
+              className="amount-edit-input"
+              autoFocus
+              value={editingAmountValue}
+              onChange={(e) => setEditingAmountValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveEditingAmount(row.original)
+                if (e.key === 'Escape') setEditingAmountId(null)
+              }}
+              onBlur={() => saveEditingAmount(row.original)}
+            />
+          ) : (
+            <span
+              className="amount editable-amount"
+              onClick={() => {
+                setEditingAmountId(row.original.id)
+                setEditingAmountValue(String(row.original.amount))
+              }}
+              title="Click to edit"
+            >
+              {row.original.amount.toFixed(2)} {row.original.currency}
+            </span>
+          ),
       },
     ],
-    []
+    [editingAmountId, editingAmountValue, txTags, editingTagsId, tagInput]
   )
 
   const uncategorizedColumns = useMemo<ColumnDef<TransactionRow>[]>(
@@ -466,141 +721,161 @@ function App() {
         ),
       },
       {
-        id: 'actions',
-        header: 'Actions',
+        id: 'tags',
+        header: 'Tags',
         cell: ({ row }) => (
-          <div className="rule-actions">
-            <button
-              className="rule-action"
-              onClick={() => assignCategory(row.original.id)}
-              disabled={(selection[row.original.id] ?? []).length === 0}
-            >
-              <span className="rule-icon rule-icon-add" aria-hidden="true" />
-              <span className="rule-action-text">
-                <strong>Add</strong>
-                <span className="rule-action-sub">Category</span>
-              </span>
-            </button>
-            <span className="rule-action-separator" aria-hidden="true" />
-            <button
-              className="rule-action rule-action-remove"
-              onClick={() => deleteTransactionRow(row.original.id)}
-            >
-              <span className="rule-icon rule-icon-remove" aria-hidden="true" />
-              <span className="rule-action-text">
-                <strong>Delete</strong>
-                <span className="rule-action-sub">Transaction</span>
-              </span>
-            </button>
-            <span className="rule-action-separator" aria-hidden="true" />
-            <button
-              className="rule-action rule-action-quick"
-              onClick={() => createRuleFromPayee(row.original)}
-              disabled={(selection[row.original.id] ?? []).length === 0}
-            >
-              <span className="rule-icon rule-icon-quick" aria-hidden="true" />
-              <span className="rule-action-text">
-                <strong>Quick rule</strong>
-                <span className="rule-action-sub">From payee</span>
-              </span>
-            </button>
-            <button
-              className="rule-action rule-action-custom"
-              onClick={() => openRuleDraft(row.original)}
-              disabled={categoryOptions.length === 0}
-            >
-              <span className="rule-icon rule-icon-custom" aria-hidden="true" />
-              <span className="rule-action-text">
-                <strong>Custom rule</strong>
-                <span className="rule-action-sub">Pick field</span>
-              </span>
-            </button>
+          <div className="multi-select-cell">
+          <CreatableSelect
+            className="multi-select"
+            classNamePrefix="rs"
+            isMulti
+            isSearchable
+            options={tagOptions}
+            value={tagOptions.filter((option) =>
+              (tagSelection[row.original.id] ?? []).includes(option.value)
+            )}
+            onChange={(values) =>
+              setTagSelection((current) => ({
+                ...current,
+                [row.original.id]: values.map((option) => option.value),
+              }))
+            }
+            onCreateOption={(inputValue) => createTagForRow(row.original.id, inputValue)}
+            placeholder="Select or create tags..."
+            menuPortalTarget={document.body}
+            menuPosition="fixed"
+            styles={{
+              control: (base, state) => ({
+                ...base,
+                backgroundColor: '#ffffff',
+                borderColor: state.isFocused ? '#2563eb' : '#d1d5db',
+                boxShadow: state.isFocused ? '0 0 0 1px #2563eb' : 'none',
+                minHeight: 34,
+              }),
+              menu: (base) => ({
+                ...base,
+                backgroundColor: '#ffffff',
+                border: '1px solid #e5e7eb',
+                color: '#1f2937',
+              }),
+              menuPortal: (base) => ({
+                ...base,
+                zIndex: 9999,
+              }),
+              option: (base, state) => ({
+                ...base,
+                backgroundColor: state.isSelected
+                  ? '#2563eb'
+                  : state.isFocused
+                  ? '#eef2ff'
+                  : '#ffffff',
+                color: state.isSelected ? '#ffffff' : '#1f2937',
+              }),
+              singleValue: (base) => ({ ...base, color: '#1f2937' }),
+              placeholder: (base) => ({ ...base, color: '#6b7280' }),
+              input: (base) => ({ ...base, color: '#1f2937' }),
+              multiValue: (base) => ({
+                ...base,
+                backgroundColor: '#eef2ff',
+                border: '1px solid #2563eb',
+              }),
+              multiValueLabel: (base) => ({ ...base, color: '#1f2937' }),
+              multiValueRemove: (base) => ({ ...base, color: '#2563eb' }),
+            }}
+          />
+            {(tagSelection[row.original.id] ?? []).length > 0 && (
+              <div className="chips compact">
+                {tagOptions
+                  .filter((option) =>
+                    (tagSelection[row.original.id] ?? []).includes(option.value)
+                  )
+                  .map((option) => (
+                    <span key={option.value} className="chip">
+                      {option.label}
+                    </span>
+                  ))}
+              </div>
+            )}
           </div>
         ),
       },
       {
-        id: 'ai',
-        header: 'AI Suggestion',
+        id: 'actions',
+        header: 'Actions',
         cell: ({ row }) => {
           const suggestion = aiSuggestions[row.original.id]
-          if (!suggestion) {
-            return <span className="muted">-</span>
-          }
-          const category = activeCategories.find(
-            (cat) => cat.id === suggestion.categoryId
-          )
+          const tagSuggestions = aiTagSuggestions[row.original.id] ?? []
+          const hasSuggestion = Boolean(suggestion) || tagSuggestions.length > 0
+          const aiTooltip = (() => {
+            const parts: string[] = []
+            if (suggestion) {
+              const category = activeCategories.find((cat) => cat.id === suggestion.categoryId)
+              parts.push(`Category: ${category?.name ?? 'Unknown'} (${suggestion.confidence.toFixed(2)})`)
+              if (suggestion.reason) {
+                parts.push(suggestion.reason)
+              }
+            }
+            if (tagSuggestions.length > 0) {
+              parts.push(
+                `Tags: ${tagSuggestions
+                  .map((tag) => `${tag.tagName} (${tag.confidence.toFixed(2)})`)
+                  .join(', ')}`
+              )
+            }
+            return parts.join('\n')
+          })()
           return (
-            <div className="ai-suggestion">
-              <div>
-                {category?.name ?? 'Unknown'} ({suggestion.confidence.toFixed(2)})
-              </div>
-              {suggestion.reason && (
-                <div className="muted">{suggestion.reason}</div>
-              )}
-              <button onClick={() => applyAiSuggestion(row.original.id)}>
-                Apply
+            <div className="rule-actions">
+              <button
+                className="rule-action"
+                onClick={() => assignCategory(row.original.id)}
+                disabled={
+                  (selection[row.original.id] ?? []).length === 0 &&
+                  (tagSelection[row.original.id] ?? []).length === 0
+                }
+                title="Assign selected category and tags to this transaction"
+              >
+                <span className="rule-icon rule-icon-add" aria-hidden="true" />
               </button>
+              <button
+                className="rule-action rule-action-custom"
+                onClick={() => openRuleDraft(row.original)}
+                disabled={categoryOptions.length === 0}
+                title="Create a custom rule"
+              >
+                <span className="rule-icon rule-icon-custom" aria-hidden="true" />
+              </button>
+              <button
+                className="rule-action rule-action-remove"
+                onClick={() => deleteTransactionRow(row.original.id)}
+                title="Delete this transaction"
+              >
+                <span className="rule-icon rule-icon-remove" aria-hidden="true" />
+              </button>
+              {hasSuggestion && (
+                <button
+                  type="button"
+                  className="rule-action"
+                  title={aiTooltip}
+                  onClick={() => pushToast(aiTooltip, 'info', 8000)}
+                >
+                  <span className="rule-icon rule-icon-info" aria-hidden="true" />
+                </button>
+              )}
             </div>
           )
         },
       },
     ],
-    [categoryOptions, selection, aiSuggestions]
-  )
-
-  const categorizedColumns = useMemo<ColumnDef<CategorizedViewRow>[]>(
-    () => [
-      { header: 'Date', accessorKey: 'bookingDate' },
-      {
-        header: 'Payee',
-        accessorKey: 'payee',
-        cell: ({ row }) => row.original.payee ?? '-',
-      },
-      {
-        header: 'Purpose',
-        accessorKey: 'purpose',
-        cell: ({ row }) => (
-          <span className="purpose">{truncatePurpose(row.original.purpose, 100)}</span>
-        ),
-      },
-      {
-        header: 'Amount',
-        accessorKey: 'amount',
-        cell: ({ row }) => (
-          <span className="amount">
-            {row.original.amount.toFixed(2)} {row.original.currency}
-          </span>
-        ),
-      },
-      {
-        id: 'categories',
-        header: 'Categories',
-        cell: ({ row }) => (
-          <div className="chips">
-            {row.original.categories.map((cat) => (
-              <button
-                key={cat.id}
-                className="chip"
-                onClick={() => removeCategory(row.original.id, cat.id)}
-              >
-                {cat.name}
-                <span className="chip-remove">x</span>
-              </button>
-            ))}
-          </div>
-        ),
-      },
-      {
-        id: 'delete',
-        header: '',
-        cell: ({ row }) => (
-          <button onClick={() => deleteTransactionRow(row.original.id)}>
-            Remove
-          </button>
-        ),
-      },
-    ],
-    []
+    [
+      categoryOptions,
+      tagOptions,
+      selection,
+      tagSelection,
+      aiSuggestions,
+      aiTagSuggestions,
+      activeCategories,
+    ]
   )
 
   const categoryColumns = useMemo<ColumnDef<CategoryRow>[]>(
@@ -652,6 +927,26 @@ function App() {
         },
       },
       {
+        header: 'Group',
+        id: 'groupType',
+        cell: ({ row }) => (
+          <select
+            value={row.original.groupType}
+            onChange={async (e) => {
+              await window.api.categories.updateGroup({ id: row.original.id, groupType: e.target.value })
+              loadCategories()
+              loadCategoriesAll()
+            }}
+          >
+            <option value="income">Income</option>
+            <option value="fixed_expense">Fixed Expenses</option>
+            <option value="variable_expense">Variable Expenses</option>
+            <option value="savings">Savings & Investments</option>
+            <option value="transfer">Internal Transfers</option>
+          </select>
+        ),
+      },
+      {
         header: 'Status',
         id: 'status',
         cell: ({ row, table }) => {
@@ -694,20 +989,230 @@ function App() {
                 className="rule-action"
                 onClick={() => meta.saveCategory(row.original.id)}
                 disabled={!hasChanges}
+                title="Save"
               >
                 <span className="rule-icon rule-icon-save" aria-hidden="true" />
-                <span className="rule-action-text">
-                  <strong>Save</strong>
-                </span>
               </button>
               <button
                 className="rule-action rule-action-remove"
                 onClick={() => meta.deleteCategoryRow(row.original.id)}
+                title="Delete"
               >
                 <span className="rule-icon rule-icon-remove" aria-hidden="true" />
-                <span className="rule-action-text">
-                  <strong>Delete</strong>
-                </span>
+              </button>
+            </div>
+          )
+        },
+      },
+    ],
+    []
+  )
+
+  const accountColumns = useMemo<ColumnDef<AccountRow>[]>(
+    () => [
+      {
+        header: 'Name',
+        accessorKey: 'name',
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as AccountTableMeta
+          const draft = meta.accountEdits[row.original.id] ?? draftFromAccount(row.original)
+          return (
+            <input
+              type="text"
+              value={draft.name}
+              onChange={(event) =>
+                meta.setAccountEdits((current) => ({
+                  ...current,
+                  [row.original.id]: {
+                    ...(current[row.original.id] ?? draftFromAccount(row.original)),
+                    name: event.target.value,
+                  },
+                }))
+              }
+            />
+          )
+        },
+      },
+      {
+        header: 'Type',
+        id: 'type',
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as AccountTableMeta
+          const draft = meta.accountEdits[row.original.id] ?? draftFromAccount(row.original)
+          return (
+            <select
+              value={draft.type}
+              onChange={(event) =>
+                meta.setAccountEdits((current) => ({
+                  ...current,
+                  [row.original.id]: {
+                    ...(current[row.original.id] ?? draftFromAccount(row.original)),
+                    type: event.target.value,
+                  },
+                }))
+              }
+            >
+              <option value="checking">Checking</option>
+              <option value="savings">Savings</option>
+              <option value="credit">Credit Card</option>
+            </select>
+          )
+        },
+      },
+      {
+        header: 'IBAN / Card',
+        id: 'identifier',
+        cell: ({ row }) => <span className="muted">{row.original.identifier ?? '—'}</span>,
+      },
+      {
+        header: 'Balance',
+        id: 'balance',
+        cell: ({ row }) =>
+          row.original.currentBalance != null ? (
+            <strong className={row.original.currentBalance < 0 ? 'negative' : ''}>
+              {formatEur(row.original.currentBalance)}
+            </strong>
+          ) : (
+            <span className="muted">set anchor</span>
+          ),
+      },
+      {
+        header: 'Anchor',
+        id: 'anchor',
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as AccountTableMeta
+          const draft = meta.accountEdits[row.original.id] ?? draftFromAccount(row.original)
+          const setField = (field: 'anchorBalance' | 'anchorDate', value: string) =>
+            meta.setAccountEdits((current) => ({
+              ...current,
+              [row.original.id]: {
+                ...(current[row.original.id] ?? draftFromAccount(row.original)),
+                [field]: value,
+              },
+            }))
+          return (
+            <span className="account-anchor-edit">
+              <input
+                type="text"
+                placeholder="0,00"
+                style={{ width: 90 }}
+                value={draft.anchorBalance}
+                onChange={(event) => setField('anchorBalance', event.target.value)}
+              />
+              <input
+                type="date"
+                value={draft.anchorDate}
+                onChange={(event) => setField('anchorDate', event.target.value)}
+              />
+            </span>
+          )
+        },
+      },
+      {
+        header: 'Data through',
+        id: 'dataThrough',
+        cell: ({ row }) => (
+          <span className="muted">
+            {row.original.lastBookingDate ?? '—'}
+            {row.original.transactionCount > 0 ? ` (${row.original.transactionCount} tx)` : ''}
+          </span>
+        ),
+      },
+      {
+        header: '',
+        id: 'actions',
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as AccountTableMeta
+          const draft = meta.accountEdits[row.original.id]
+          const baseline = draftFromAccount(row.original)
+          const hasChanges =
+            draft &&
+            (draft.name !== baseline.name ||
+              draft.type !== baseline.type ||
+              draft.anchorBalance !== baseline.anchorBalance ||
+              draft.anchorDate !== baseline.anchorDate)
+          return (
+            <div className="rule-actions">
+              <button
+                className="rule-action"
+                onClick={() => meta.saveAccount(row.original.id)}
+                disabled={!hasChanges}
+                title="Save"
+              >
+                <span className="rule-icon rule-icon-save" aria-hidden="true" />
+              </button>
+              <button
+                className="rule-action rule-action-remove"
+                onClick={() => meta.deleteAccountRow(row.original.id)}
+                title="Delete"
+              >
+                <span className="rule-icon rule-icon-remove" aria-hidden="true" />
+              </button>
+            </div>
+          )
+        },
+      },
+    ],
+    []
+  )
+
+  const tagColumns = useMemo<ColumnDef<TagRow>[]>(
+    () => [
+      {
+        header: 'Name',
+        accessorKey: 'name',
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as TagTableMeta
+          const draft = meta.tagEdits[row.original.id] ?? row.original
+          return (
+            <input
+              type="text"
+              value={draft.name}
+              onChange={(event) =>
+                meta.setTagEdits((current) => ({
+                  ...current,
+                  [row.original.id]: {
+                    ...(current[row.original.id] ?? row.original),
+                    name: event.target.value,
+                  },
+                }))
+              }
+            />
+          )
+        },
+      },
+      {
+        header: 'Usage',
+        id: 'usageCount',
+        cell: ({ row }) => (
+          <span className="muted">
+            {row.original.usageCount} transaction{row.original.usageCount === 1 ? '' : 's'}
+          </span>
+        ),
+      },
+      {
+        header: '',
+        id: 'actions',
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as TagTableMeta
+          const draft = meta.tagEdits[row.original.id]
+          const hasChanges = draft && draft.name.trim() !== '' && draft.name !== row.original.name
+          return (
+            <div className="rule-actions">
+              <button
+                className="rule-action"
+                onClick={() => meta.saveTagRow(row.original.id)}
+                disabled={!hasChanges}
+                title="Save"
+              >
+                <span className="rule-icon rule-icon-save" aria-hidden="true" />
+              </button>
+              <button
+                className="rule-action rule-action-remove"
+                onClick={() => meta.deleteTagRow(row.original.id)}
+                title="Delete"
+              >
+                <span className="rule-icon rule-icon-remove" aria-hidden="true" />
               </button>
             </div>
           )
@@ -744,6 +1249,7 @@ function App() {
               <option value="payee">Payee</option>
               <option value="purpose">Purpose</option>
               <option value="iban">IBAN</option>
+              <option value="method">Method</option>
               <option value="bic">BIC</option>
               <option value="amount">Amount</option>
               <option value="direction">Direction</option>
@@ -837,6 +1343,74 @@ function App() {
         },
       },
       {
+        header: 'Tags',
+        id: 'tags',
+        cell: ({ row, table }) => {
+          const meta = table.options.meta as RuleTableMeta
+          if (!meta) {
+            return null
+          }
+          const draft = meta.ruleEdits[row.original.id] ?? row.original
+          return (
+            <Select
+              className="multi-select"
+              classNamePrefix="rs"
+              isMulti
+              isSearchable
+              options={meta.tagOptions}
+              value={meta.tagOptions.filter((option) => draft.tagIds.includes(option.value))}
+              onChange={(values) =>
+                meta.setRuleEdits((current) => ({
+                  ...current,
+                  [row.original.id]: {
+                    ...draft,
+                    tagIds: values.map((option) => option.value),
+                  },
+                }))
+              }
+              placeholder="Select tags..."
+              menuPortalTarget={document.body}
+              menuPosition="fixed"
+              styles={{
+                control: (base, state) => ({
+                  ...base,
+                  backgroundColor: '#ffffff',
+                  borderColor: state.isFocused ? '#2563eb' : '#d1d5db',
+                  boxShadow: state.isFocused ? '0 0 0 1px #2563eb' : 'none',
+                  minHeight: 34,
+                }),
+                menu: (base) => ({
+                  ...base,
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #e5e7eb',
+                  color: '#1f2937',
+                }),
+                menuPortal: (base) => ({ ...base, zIndex: 9999 }),
+                option: (base, state) => ({
+                  ...base,
+                  backgroundColor: state.isSelected
+                    ? '#2563eb'
+                    : state.isFocused
+                    ? '#eef2ff'
+                    : '#ffffff',
+                  color: state.isSelected ? '#ffffff' : '#1f2937',
+                }),
+                singleValue: (base) => ({ ...base, color: '#1f2937' }),
+                placeholder: (base) => ({ ...base, color: '#6b7280' }),
+                input: (base) => ({ ...base, color: '#1f2937' }),
+                multiValue: (base) => ({
+                  ...base,
+                  backgroundColor: '#eef2ff',
+                  border: '1px solid #2563eb',
+                }),
+                multiValueLabel: (base) => ({ ...base, color: '#1f2937' }),
+                multiValueRemove: (base) => ({ ...base, color: '#2563eb' }),
+              }}
+            />
+          )
+        },
+      },
+      {
         header: 'Priority',
         accessorKey: 'priority',
         cell: ({ row, table }) => {
@@ -908,27 +1482,24 @@ function App() {
               draft.matcherValue !== row.original.matcherValue ||
               draft.categoryId !== row.original.categoryId ||
               draft.priority !== row.original.priority ||
-              draft.isActive !== row.original.isActive)
+              draft.isActive !== row.original.isActive ||
+              !sameTagIds(draft.tagIds, row.original.tagIds))
           return (
             <div className="rule-actions">
               <button
                 className="rule-action"
                 onClick={() => meta.saveRule(row.original.id)}
                 disabled={!hasChanges}
+                title="Save"
               >
                 <span className="rule-icon rule-icon-save" aria-hidden="true" />
-                <span className="rule-action-text">
-                  <strong>Save</strong>
-                </span>
               </button>
               <button
                 className="rule-action rule-action-remove"
                 onClick={() => meta.deleteRule(row.original.id)}
+                title="Delete"
               >
                 <span className="rule-icon rule-icon-remove" aria-hidden="true" />
-                <span className="rule-action-text">
-                  <strong>Delete</strong>
-                </span>
               </button>
             </div>
           )
@@ -944,6 +1515,7 @@ function App() {
       limit: pageSizeTransactions,
       offset: page * pageSizeTransactions,
       search: transactionSearch || undefined,
+      accountIds: selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
     })
     setTransactions(result.rows)
     setTransactionsTotal(result.total)
@@ -954,9 +1526,11 @@ function App() {
     const result = await window.api.transactions.listUncategorized({
       limit: pageSizeUncategorized,
       offset: uncategorizedPage * pageSizeUncategorized,
+      accountIds: selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
     })
     setUncategorized(result.rows)
     setUncategorizedTotal(result.total)
+    return result.rows
   }
 
   const loadCategorized = async () => {
@@ -964,6 +1538,7 @@ function App() {
       limit: pageSizeCategorized,
       offset: categorizedPage * pageSizeCategorized,
       categoryIds: categorizedFilter.length > 0 ? categorizedFilter : undefined,
+      accountIds: selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
     })
     setCategorizedTotal(result.total)
     const rows = result.rows
@@ -979,6 +1554,7 @@ function App() {
           payee: row.payee,
           purpose: row.purpose,
           categoryCount: row.categoryCount,
+          source: row.source,
           categories: [{ id: row.categoryId, name: row.categoryName }],
         })
       } else {
@@ -1007,6 +1583,23 @@ function App() {
     setCategoriesAll(result.rows)
   }
 
+  const loadAccounts = async () => {
+    const rows = await window.api.accounts.list()
+    setAccounts(rows)
+    setAccountEdits({})
+  }
+
+  const loadTags = async () => {
+    const result = await window.api.tags.list({
+      limit: pageSizeTags,
+      offset: tagsPage * pageSizeTags,
+      search: tagSearch || undefined,
+    })
+    setTags(result.rows)
+    setTagsTotal(result.total)
+    setTagEdits({})
+  }
+
   const loadRules = async () => {
     const result = await window.api.rules.list({
       limit: pageSizeRules,
@@ -1021,12 +1614,14 @@ function App() {
   const loadAiSuggestions = async (ids: number[]) => {
     if (ids.length === 0) {
       setAiSuggestions({})
+      setAiTagSuggestions({})
       return
     }
 
-    const suggestions = await window.api.ai.suggestions({
-      transactionIds: ids,
-    })
+    const [suggestions, tagSuggestions] = await Promise.all([
+      window.api.ai.suggestions({ transactionIds: ids }),
+      window.api.ai.tagSuggestions({ transactionIds: ids }),
+    ])
     const map: Record<
       number,
       { categoryId: number; confidence: number; reason: string | null }
@@ -1039,12 +1634,42 @@ function App() {
       }
     }
     setAiSuggestions(map)
+
+    const tagMap: Record<number, Array<{ tagName: string; confidence: number }>> = {}
+    for (const item of tagSuggestions) {
+      if (!tagMap[item.transactionId]) tagMap[item.transactionId] = []
+      tagMap[item.transactionId].push({ tagName: item.tagName, confidence: item.confidence })
+    }
+    setAiTagSuggestions(tagMap)
+
     setSelection((current) => {
       const next = { ...current }
       for (const item of suggestions) {
         const existing = next[item.transactionId] ?? []
         if (existing.length === 0) {
           next[item.transactionId] = [item.categoryId]
+        }
+      }
+      return next
+    })
+
+    // Suggested tags are named, not id-based (the AI can propose brand-new
+    // tag names) — only prefill the dropdown when the name already matches
+    // an existing tag, since we can't select an option that doesn't exist.
+    const matchedTagIdsByTx = new Map<number, number[]>()
+    for (const item of tagSuggestions) {
+      const match = allTags.find((tag) => tag.name.toLowerCase() === item.tagName.toLowerCase())
+      if (!match) continue
+      const ids = matchedTagIdsByTx.get(item.transactionId) ?? []
+      if (!ids.includes(match.id)) ids.push(match.id)
+      matchedTagIdsByTx.set(item.transactionId, ids)
+    }
+    setTagSelection((current) => {
+      const next = { ...current }
+      for (const [transactionId, ids] of matchedTagIdsByTx) {
+        const existing = next[transactionId] ?? []
+        if (existing.length === 0) {
+          next[transactionId] = ids
         }
       }
       return next
@@ -1060,10 +1685,20 @@ function App() {
       confidenceThreshold: settings.confidenceThreshold,
       inputCostPer1M: settings.inputCostPer1M,
       outputCostPer1M: settings.outputCostPer1M,
+      webSearch: settings.webSearch ?? 0,
+      apiKey: settings.apiKey,
     })
-    setAiKeyPresent(keyStatus.present)
-    const requests = await window.api.ai.listRequests({ limit: 50 })
-    setAiRequests(requests)
+    setAiKeyStatus(keyStatus)
+    await loadAiRequests()
+  }
+
+  const loadAiRequests = async () => {
+    const result = await window.api.ai.listRequests({
+      limit: pageSizeAiRequests,
+      offset: aiRequestsPage * pageSizeAiRequests,
+    })
+    setAiRequests(result.rows)
+    setAiRequestsTotal(result.total)
   }
 
   const loadDashboardMonths = async () => {
@@ -1095,16 +1730,19 @@ function App() {
   }
 
   const loadDashboardData = async () => {
+    const accountIds = selectedAccountIds.length > 0 ? selectedAccountIds : undefined
     if (dashboardRange === 'month') {
       if (!dashboardMonth) {
         return
       }
-      const [summary, categories] = await Promise.all([
-        window.api.dashboard.summary({ month: dashboardMonth }),
-        window.api.dashboard.categories({ month: dashboardMonth }),
+      const [summary, categories, tagSpend] = await Promise.all([
+        window.api.dashboard.summary({ month: dashboardMonth, accountIds }),
+        window.api.dashboard.categories({ month: dashboardMonth, accountIds }),
+        window.api.dashboard.tags({ month: dashboardMonth, accountIds }),
       ])
       setDashboardSummary(summary)
       setDashboardCategories(categories)
+      setDashboardTagSpend(tagSpend)
       return
     }
 
@@ -1113,18 +1751,26 @@ function App() {
       return
     }
 
-    const [summary, categories] = await Promise.all([
+    const [summary, categories, tagSpend] = await Promise.all([
       window.api.dashboard.summaryRange({
         startMonth: bounds.startMonth,
         endMonth: bounds.endMonth,
+        accountIds,
       }),
       window.api.dashboard.categoriesRange({
         startMonth: bounds.startMonth,
         endMonth: bounds.endMonth,
+        accountIds,
+      }),
+      window.api.dashboard.tagsRange({
+        startMonth: bounds.startMonth,
+        endMonth: bounds.endMonth,
+        accountIds,
       }),
     ])
     setDashboardSummary(summary)
     setDashboardCategories(categories)
+    setDashboardTagSpend(tagSpend)
   }
 
   const loadDashboardCategoryTransactions = async () => {
@@ -1134,11 +1780,21 @@ function App() {
       return
     }
 
-    const result = await window.api.transactions.listCategorized({
-      limit: pageSizeDashboardTransactions,
-      offset: dashboardCategoryPage * pageSizeDashboardTransactions,
-      categoryIds: [dashboardCategorySelectionId],
-    })
+    const accountIds = selectedAccountIds.length > 0 ? selectedAccountIds : undefined
+    const result =
+      dashboardGroupBy === 'category'
+        ? await window.api.transactions.listCategorized({
+            limit: pageSizeDashboardTransactions,
+            offset: dashboardCategoryPage * pageSizeDashboardTransactions,
+            categoryIds: [dashboardCategorySelectionId],
+            accountIds,
+          })
+        : await window.api.transactions.listByTag({
+            tagId: dashboardCategorySelectionId,
+            limit: pageSizeDashboardTransactions,
+            offset: dashboardCategoryPage * pageSizeDashboardTransactions,
+            accountIds,
+          })
 
     setDashboardCategoryTransactions(result.rows)
     setDashboardCategoryTransactionsTotal(result.total)
@@ -1164,17 +1820,17 @@ function App() {
 
     return (
       <g>
-        {data.map((entry: { categoryId?: number; categoryName?: string }, index: number) => {
-          if (!entry?.categoryName || !entry?.categoryId) {
+        {data.map((entry: { id?: number; name?: string }, index: number) => {
+          if (!entry?.name || !entry?.id) {
             return null
           }
-          const x = xAxis.scale(entry.categoryName)
+          const x = xAxis.scale(entry.name)
           if (x == null) {
             return null
           }
           return (
             <rect
-              key={`${entry.categoryId}-${index}`}
+              key={`${entry.id}-${index}`}
               x={x}
               y={offset.top}
               width={bandWidth}
@@ -1182,7 +1838,7 @@ function App() {
               fill="transparent"
               pointerEvents="all"
               style={{ cursor: 'pointer' }}
-              onClick={() => handleDashboardCategorySelect(entry.categoryId as number)}
+              onClick={() => handleDashboardCategorySelect(entry.id as number)}
             />
           )
         })}
@@ -1197,38 +1853,55 @@ function App() {
     loadCategories()
     loadCategoriesAll()
     loadRules()
+    loadTags()
     loadAiSettings()
     loadDashboardMonths()
+    loadAccounts()
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = window.api.ai.onSuggestProgress((status) => {
+      setAiStatus(status)
+    })
+    return unsubscribe
+  }, [])
+
+  useEffect(() => {
+    loadTxTags(transactions.map((tx) => tx.id))
+  }, [transactions])
+
+  useEffect(() => {
+    loadAllTags()
   }, [])
 
   useEffect(() => {
     if (dashboardRange === 'month' && dashboardMonth) {
       loadDashboardData()
     }
-  }, [dashboardMonth, dashboardRange])
+  }, [dashboardMonth, dashboardRange, selectedAccountIds])
 
   useEffect(() => {
     if (dashboardRange !== 'month') {
       loadDashboardData()
     }
-  }, [dashboardRange, dashboardMonths])
+  }, [dashboardRange, dashboardMonths, selectedAccountIds])
 
   useEffect(() => {
-    if (dashboardNetCategories.length === 0) {
+    if (dashboardNetBreakdown.length === 0) {
       setDashboardCategorySelectionId(null)
       return
     }
     setDashboardCategorySelectionId((current) => {
       if (
         current &&
-        dashboardNetCategories.some((row) => row.categoryId === current)
+        dashboardNetBreakdown.some((row) => row.id === current)
       ) {
         return current
       }
-      return dashboardNetCategories[0].categoryId
+      return dashboardNetBreakdown[0].id
     })
     setDashboardCategoryPage(0)
-  }, [dashboardNetCategories])
+  }, [dashboardNetBreakdown])
 
   useEffect(() => {
     loadDashboardCategoryTransactions()
@@ -1236,6 +1909,7 @@ function App() {
     dashboardCategorySelectionId,
     dashboardCategoryPage,
     pageSizeDashboardTransactions,
+    selectedAccountIds,
   ])
 
   useEffect(() => {
@@ -1253,15 +1927,15 @@ function App() {
 
   useEffect(() => {
     loadTransactions()
-  }, [page, pageSizeTransactions, transactionSearch])
+  }, [page, pageSizeTransactions, transactionSearch, selectedAccountIds])
 
   useEffect(() => {
     loadUncategorized()
-  }, [uncategorizedPage, pageSizeUncategorized])
+  }, [uncategorizedPage, pageSizeUncategorized, selectedAccountIds])
 
   useEffect(() => {
     loadCategorized()
-  }, [categorizedPage, pageSizeCategorized, categorizedFilter])
+  }, [categorizedPage, pageSizeCategorized, categorizedFilter, selectedAccountIds])
 
   useEffect(() => {
     const maxPage = Math.max(
@@ -1276,6 +1950,18 @@ function App() {
   useEffect(() => {
     setCategorizedPage(0)
   }, [categorizedFilter])
+
+  useEffect(() => {
+    setPage(0)
+  }, [selectedAccountIds])
+
+  useEffect(() => {
+    setUncategorizedPage(0)
+  }, [selectedAccountIds])
+
+  useEffect(() => {
+    setCategorizedPage(0)
+  }, [selectedAccountIds])
 
   useEffect(() => {
     setCategoriesPage(0)
@@ -1296,6 +1982,20 @@ function App() {
   }, [categoriesTotal, pageSizeCategories, categoriesPage])
 
   useEffect(() => {
+    loadAiRequests()
+  }, [aiRequestsPage, pageSizeAiRequests])
+
+  useEffect(() => {
+    const maxPage = Math.max(
+      0,
+      Math.ceil(aiRequestsTotal / pageSizeAiRequests) - 1
+    )
+    if (aiRequestsPage > maxPage) {
+      setAiRequestsPage(maxPage)
+    }
+  }, [aiRequestsTotal, pageSizeAiRequests, aiRequestsPage])
+
+  useEffect(() => {
     loadRules()
   }, [rulesPage, pageSizeRules, ruleSearch])
 
@@ -1309,6 +2009,21 @@ function App() {
       setRulesPage(maxPage)
     }
   }, [rulesTotal, pageSizeRules, rulesPage])
+
+  useEffect(() => {
+    setTagsPage(0)
+  }, [tagSearch])
+
+  useEffect(() => {
+    loadTags()
+  }, [tagsPage, pageSizeTags, tagSearch])
+
+  useEffect(() => {
+    const maxPage = Math.max(0, Math.ceil(tagsTotal / pageSizeTags) - 1)
+    if (tagsPage > maxPage) {
+      setTagsPage(maxPage)
+    }
+  }, [tagsTotal, pageSizeTags, tagsPage])
 
   useEffect(() => {
     const maxPage = Math.max(
@@ -1372,7 +2087,44 @@ function App() {
     setWarnings([])
   }
 
-  const pickFile = async (provider: 'dkb' | 'ing') => {
+  const clearAndReset = async () => {
+    const confirmed = window.confirm(
+      'This will permanently delete ALL transactions, rules, budgets, and imports, and restore only the 12 default categories. This cannot be undone. Continue?'
+    )
+    if (!confirmed) return
+    await window.api.db.clearAndReset()
+    setDashboardMonths([])
+    setDashboardMonth('')
+    setDashboardSummary(null)
+    setDashboardCategories([])
+    loadTransactions()
+    loadUncategorized()
+    loadCategorized()
+    loadCategories()
+    loadCategoriesAll()
+    loadRules()
+    setCategorizationVersion((v) => v + 1)
+    pushToast('Database reset. Default categories restored.', 'success')
+  }
+
+  const clearTransactions = async () => {
+    const confirmed = window.confirm(
+      'This will permanently delete all transactions and imports. This cannot be undone. Continue?'
+    )
+    if (!confirmed) return
+    await window.api.db.clearTransactions()
+    setDashboardMonths([])
+    setDashboardMonth('')
+    setDashboardSummary(null)
+    setDashboardCategories([])
+    loadTransactions()
+    loadUncategorized()
+    loadCategorized()
+    setCategorizationVersion((v) => v + 1)
+    pushToast('All transactions deleted.', 'success')
+  }
+
+  const pickFile = async (provider: 'dkb' | 'ing' | 'sparkasse' | 'volksbank') => {
     const selected = await window.api.import.pickFile(provider)
     if (selected) {
       setFilePath(selected)
@@ -1393,6 +2145,10 @@ function App() {
     const result =
       importProvider === 'ing'
         ? await window.api.import.ing(filePath)
+        : importProvider === 'sparkasse'
+        ? await window.api.import.sparkasse(filePath)
+        : importProvider === 'volksbank'
+        ? await window.api.import.volksbank(filePath)
         : await window.api.import.dkb(filePath)
     if (result.success) {
       setStatus(`Imported ${result.inserted} rows (skipped ${result.skipped}).`)
@@ -1456,6 +2212,50 @@ function App() {
     loadCategoriesAll()
   }
 
+  const saveAccount = async (id: number) => {
+    const draft = accountEdits[id]
+    if (!draft) {
+      return
+    }
+    const trimmedBalance = draft.anchorBalance.trim()
+    const anchorBalance =
+      trimmedBalance === '' ? null : parseFloat(trimmedBalance.replace(',', '.'))
+    if (anchorBalance !== null && Number.isNaN(anchorBalance)) {
+      pushToast('Anchor balance must be a number.', 'error')
+      return
+    }
+    await window.api.accounts.update({
+      id,
+      name: draft.name,
+      type: draft.type,
+      anchorBalance,
+      anchorDate: draft.anchorDate.trim() === '' ? null : draft.anchorDate,
+    })
+    pushToast('Account updated.', 'success')
+    loadAccounts()
+  }
+
+  const deleteAccountRow = (id: number) => {
+    const account = accounts.find((a) => a.id === id)
+    const txCount = account?.transactionCount ?? 0
+    setConfirmDialog({
+      message:
+        txCount > 0
+          ? `Delete this account and all ${txCount} associated transaction${txCount === 1 ? '' : 's'}? This cannot be undone.`
+          : 'Delete this account? This cannot be undone.',
+      onConfirm: async () => {
+        const success = await window.api.accounts.delete({ id })
+        if (success) {
+          pushToast('Account deleted.', 'success')
+        } else {
+          pushToast('Account could not be deleted.', 'error')
+        }
+        setConfirmDialog(null)
+        loadAccounts()
+      },
+    })
+  }
+
   const deleteCategoryRow = async (id: number) => {
     const result = await window.api.categories.delete({ id })
     if (result.deleted) {
@@ -1472,24 +2272,83 @@ function App() {
     loadCategoriesAll()
   }
 
-  const assignCategory = async (transactionId: number) => {
-    const categoryIds = selection[transactionId] ?? []
-    if (categoryIds.length === 0) {
+  const createTag = async () => {
+    const name = newTagName.trim()
+    if (!name) {
+      setTagStatus('Name is required.')
+      pushToast('Tag name is required.', 'error')
       return
     }
 
-    await Promise.all(
-      categoryIds.map((categoryId) =>
+    const createdId = await window.api.tags.create({ name })
+
+    if (!createdId) {
+      setTagStatus('Tag could not be created.')
+      pushToast('Tag could not be created.', 'error')
+      return
+    }
+
+    setTagStatus('Tag created.')
+    pushToast('Tag created.', 'success')
+    setNewTagName('')
+    setNewTagModalOpen(false)
+    loadTags()
+    loadAllTags()
+  }
+
+  const saveTagRow = async (id: number) => {
+    const draft = tagEdits[id]
+    if (!draft) {
+      return
+    }
+    await window.api.tags.rename({ id, name: draft.name })
+    setTagStatus('Tag saved.')
+    pushToast('Tag updated.', 'success')
+    loadTags()
+    loadAllTags()
+  }
+
+  const deleteTagRow = async (id: number) => {
+    await window.api.tags.delete({ id })
+    setTagStatus('Tag deleted.')
+    pushToast('Tag deleted.', 'success')
+    loadTags()
+    loadAllTags()
+  }
+
+  const assignCategory = async (transactionId: number) => {
+    const categoryIds = selection[transactionId] ?? []
+    const tagIds = tagSelection[transactionId] ?? []
+    if (categoryIds.length === 0 && tagIds.length === 0) {
+      return
+    }
+
+    await Promise.all([
+      ...categoryIds.map((categoryId) =>
         window.api.transactions.addCategory({ transactionId, categoryId })
-      )
-    )
+      ),
+      ...tagIds.flatMap((tagId) => {
+        const tag = allTags.find((t) => t.id === tagId)
+        return tag ? [window.api.tags.addToTransaction({ transactionId, name: tag.name })] : []
+      }),
+    ])
     setSelection((current) => {
+      const next = { ...current }
+      delete next[transactionId]
+      return next
+    })
+    setTagSelection((current) => {
       const next = { ...current }
       delete next[transactionId]
       return next
     })
     loadUncategorized()
     loadCategorized()
+    loadDashboardData()
+    setCategorizationVersion((v) => v + 1)
+    if (tagIds.length > 0) {
+      loadAllTags()
+    }
   }
 
   const removeCategory = async (transactionId: number, categoryId: number) => {
@@ -1520,6 +2379,78 @@ function App() {
     })
   }
 
+  const categorizedColumns = useMemo<ColumnDef<CategorizedViewRow>[]>(
+    () => [
+      { header: 'Date', accessorKey: 'bookingDate' },
+      {
+        header: 'Payee',
+        accessorKey: 'payee',
+        cell: ({ row }) => row.original.payee ?? '-',
+      },
+      {
+        header: 'Purpose',
+        accessorKey: 'purpose',
+        cell: ({ row }) => (
+          <span className="purpose">{truncatePurpose(row.original.purpose, 100)}</span>
+        ),
+      },
+      {
+        header: 'Amount',
+        accessorKey: 'amount',
+        cell: ({ row }) => (
+          <span className="amount">
+            {row.original.amount.toFixed(2)} {row.original.currency}
+          </span>
+        ),
+      },
+      {
+        id: 'categories',
+        header: 'Categories',
+        cell: ({ row }) => (
+          <div className="chips">
+            {row.original.categories.map((cat) => (
+              <button
+                key={cat.id}
+                className="chip"
+                onClick={() => removeCategory(row.original.id, cat.id)}
+              >
+                {cat.name}
+                <span className="chip-remove">x</span>
+              </button>
+            ))}
+          </div>
+        ),
+      },
+      {
+        id: 'delete',
+        header: '',
+        cell: ({ row }) => (
+          <button onClick={() => deleteTransactionRow(row.original.id)}>
+            Remove
+          </button>
+        ),
+      },
+    ],
+    [removeCategory, deleteTransactionRow]
+  )
+
+  const createTagForRuleDraft = async (name: string) => {
+    const id = await window.api.tags.create({ name })
+    if (!id) return
+    await loadAllTags()
+    setRuleDraft((current) => (current ? { ...current, tagIds: [...current.tagIds, id] } : current))
+  }
+
+  const createTagForRow = async (transactionId: number, name: string) => {
+    const id = await window.api.tags.create({ name })
+    if (!id) return
+    await loadAllTags()
+    setTagSelection((current) => ({
+      ...current,
+      [transactionId]: [...(current[transactionId] ?? []), id],
+    }))
+  }
+
   const openRuleDraft = (tx: TransactionRow) => {
     const defaultCategory =
       (selection[tx.id] ?? [])[0] ?? activeCategories[0]?.id
@@ -1537,33 +2468,47 @@ function App() {
       categoryId: defaultCategory,
       priority: 100,
       isActive: 1,
+      tagIds: tagSelection[tx.id] ?? [],
     })
   }
 
-  const createRuleFromPayee = async (tx: TransactionRow) => {
-    const defaultCategory = (selection[tx.id] ?? [])[0]
-    if (!defaultCategory) {
-      return
-    }
-    const matcherValue = tx.payee ?? tx.purpose ?? ''
-    if (!matcherValue.trim()) {
-      setRulesStatusModal('No payee available for this transaction.')
-      pushToast('No payee available for this transaction.', 'error')
+  const createQuickRulesForAll = async () => {
+    const txsWithSelection = uncategorized.filter(
+      (tx) => (selection[tx.id] ?? []).length > 0
+    )
+    if (txsWithSelection.length === 0) {
+      pushToast('Select a category for at least one transaction first.', 'info')
       return
     }
 
-    await window.api.rules.create({
-      matcherType: 'payee',
-      matcherOperator: 'contains',
-      matcherValue: matcherValue.trim(),
-      categoryId: defaultCategory,
-      priority: 100,
-      isActive: 1,
-    })
+    let created = 0
+    for (const tx of txsWithSelection) {
+      const defaultCategory = (selection[tx.id] ?? [])[0]
+      if (!defaultCategory) continue
+      const matcherType = tx.payee ? 'payee' : 'purpose'
+      const matcherValue = tx.payee ?? tx.purpose ?? ''
+      if (!matcherValue.trim()) continue
+      await window.api.rules.create({
+        matcherType,
+        matcherOperator: 'contains',
+        matcherValue: matcherValue.trim(),
+        categoryId: defaultCategory,
+        priority: 100,
+        isActive: 1,
+      })
+      created++
+    }
+
+    if (created === 0) {
+      pushToast('No valid transactions to create rules for.', 'info')
+      return
+    }
+
+    setRulesStatus(`Creating ${created} rule${created > 1 ? 's' : ''}...`)
     await applyRules()
-    setRulesStatusModal('Rule created from payee and applied.')
-    pushToast('Rule created and applied.', 'success')
+    pushToast(`${created} rule${created > 1 ? 's' : ''} created and applied.`, 'success')
   }
+
 
   const saveRuleDraft = async () => {
     if (!ruleDraft) {
@@ -1582,6 +2527,7 @@ function App() {
       categoryId: ruleDraft.categoryId,
       priority: ruleDraft.priority,
       isActive: ruleDraft.isActive,
+      tagIds: ruleDraft.tagIds,
     })
 
     setRuleDraft(null)
@@ -1598,6 +2544,8 @@ function App() {
     )
     loadUncategorized()
     loadCategorized()
+    loadDashboardData()
+    setCategorizationVersion((v) => v + 1)
   }
 
   const formatCurrency = (value: number) =>
@@ -1637,44 +2585,39 @@ function App() {
     }).format(value)
 
   const suggestWithAi = async () => {
+    if (aiSuggestLoading) return
+    setAiSuggestLoading(true)
     setAiStatus('Requesting AI suggestions...')
-    const result = await window.api.ai.suggest({
-      transactions: uncategorized.map((tx) => ({
-        id: tx.id,
-        bookingDate: tx.bookingDate,
-        amount: tx.amount,
-        currency: tx.currency,
-        payee: tx.payee,
-        purpose: tx.purpose,
-      })),
-      categories: activeCategories.map((cat) => ({
-        id: cat.id,
-        name: cat.name,
-      })),
-    })
+    try {
+      const result = await window.api.ai.suggestAll()
 
-    if (result.error) {
-      setAiStatus(result.error)
-      pushToast(result.error, 'error')
-      return
+      if (result.error) {
+        setAiStatus(result.error)
+        pushToast(result.error, 'error')
+        return
+      }
+
+      const needsReview = result.applied - result.autoApplied
+      const summary = `AI categorized ${result.autoApplied} transactions automatically (${result.autoAppliedTags} tags auto-applied); ${needsReview} suggestions need review.`
+      setAiStatus(summary)
+      pushToast(summary, 'success')
+      if (result.warnings?.length) {
+        pushToast(`${result.warnings.length} batch(es) failed — run Suggest again to retry those.`, 'error')
+      }
+      let currentIds = uncategorized.map((tx) => tx.id)
+      if (result.autoApplied > 0) {
+        currentIds = (await loadUncategorized()).map((tx) => tx.id)
+        loadCategorized()
+        setCategorizationVersion((v) => v + 1)
+      }
+      await loadAiSuggestions(currentIds)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'AI suggestion failed unexpectedly.'
+      setAiStatus(message)
+      pushToast(message, 'error')
+    } finally {
+      setAiSuggestLoading(false)
     }
-
-    setAiStatus(`AI suggested ${result.applied} transactions.`)
-    pushToast(`AI suggested ${result.applied} transactions.`, 'info')
-    loadAiSuggestions(uncategorized.map((tx) => tx.id))
-  }
-
-  const applyAiSuggestion = async (transactionId: number) => {
-    const suggestion = aiSuggestions[transactionId]
-    if (!suggestion) {
-      return
-    }
-    await window.api.transactions.addCategory({
-      transactionId,
-      categoryId: suggestion.categoryId,
-    })
-    loadUncategorized()
-    loadCategorized()
   }
 
   const createRule = async () => {
@@ -1691,6 +2634,7 @@ function App() {
       categoryId: newRule.categoryId,
       priority: newRule.priority,
       isActive: newRule.isActive,
+      tagIds: newRule.tagIds,
     })
 
     setNewRule({
@@ -1700,6 +2644,7 @@ function App() {
       categoryId: newRule.categoryId,
       priority: newRule.priority,
       isActive: newRule.isActive,
+      tagIds: [],
     })
     await applyRules()
     setRulesStatusModal('Rule created and applied.')
@@ -1748,868 +2693,288 @@ function App() {
         <div className="brand">
           <img className="brand-logo" src={horusLogo} alt="Horus logo" />
         </div>
+        <div className="sidebar-filter">
+          <span className="sidebar-filter-label">Accounts</span>
+          <Select
+            className="multi-select account-filter"
+            classNamePrefix="rs"
+            isMulti
+            isSearchable
+            closeMenuOnSelect={false}
+            hideSelectedOptions={false}
+            controlShouldRenderValue={false}
+            options={accountFilterOptions}
+            value={accountFilterOptions.filter((o) => selectedAccountIds.includes(o.value))}
+            onChange={(values) => setSelectedAccountIds(values.map((o) => o.value))}
+            placeholder={
+              selectedAccountIds.length === 0
+                ? 'All accounts'
+                : selectedAccountIds.length === 1
+                ? accountFilterOptions.find((o) => o.value === selectedAccountIds[0])?.label ?? '1 account selected'
+                : `${selectedAccountIds.length} accounts selected`
+            }
+            menuPortalTarget={document.body}
+            menuPosition="fixed"
+            styles={{
+              ...multiSelectStyles,
+              valueContainer: (base) => ({
+                ...base,
+                flexWrap: 'nowrap',
+                overflow: 'hidden',
+              }),
+              placeholder: (base) => ({
+                ...base,
+                color: selectedAccountIds.length > 0 ? '#1f2937' : '#6b7280',
+                overflow: 'hidden',
+                whiteSpace: 'nowrap',
+                textOverflow: 'ellipsis',
+                maxWidth: '100%',
+              }),
+            }}
+          />
+        </div>
         <nav className="nav">
-          <button
-            className={activeView === 'dashboard' ? 'active' : ''}
-            onClick={() => setActiveView('dashboard')}
-          >
-            Dashboard
-          </button>
-          <button
-            className={activeView === 'categorization' ? 'active' : ''}
-            onClick={() => setActiveView('categorization')}
-          >
-            Categorization
-          </button>
-          <button
-            className={activeView === 'categories' ? 'active' : ''}
-            onClick={() => setActiveView('categories')}
-          >
-            Categories
-          </button>
-          <button
-            className={activeView === 'rules' ? 'active' : ''}
-            onClick={() => setActiveView('rules')}
-          >
-            Rules
-          </button>
-          <button
-            className={activeView === 'transactions' ? 'active' : ''}
-            onClick={() => setActiveView('transactions')}
-          >
-            Transactions
-          </button>
-          <button
-            className={activeView === 'ai' ? 'active' : ''}
-            onClick={() => setActiveView('ai')}
-          >
-            AI Settings
-          </button>
+          <div className="nav-section">
+            <button
+              className={activeView === 'dashboard' ? 'active' : ''}
+              onClick={() => setActiveView('dashboard')}
+            >
+              Dashboard
+            </button>
+            <button
+              className={activeView === 'budget' ? 'active' : ''}
+              onClick={() => setActiveView('budget')}
+            >
+              Budget
+            </button>
+          </div>
+          <div className="nav-section">
+            <span className="nav-section-label">Actions</span>
+            <button
+              className={activeView === 'transactions' ? 'active' : ''}
+              onClick={() => setActiveView('transactions')}
+            >
+              Transactions
+            </button>
+            <button
+              className={activeView === 'categorization' ? 'active' : ''}
+              onClick={() => setActiveView('categorization')}
+            >
+              Categorization
+            </button>
+          </div>
+          <div className="nav-section">
+            <span className="nav-section-label">Configuration</span>
+            <button
+              className={activeView === 'categories' ? 'active' : ''}
+              onClick={() => setActiveView('categories')}
+            >
+              Categories
+            </button>
+            <button
+              className={activeView === 'rules' ? 'active' : ''}
+              onClick={() => setActiveView('rules')}
+            >
+              Rules
+            </button>
+            <button
+              className={activeView === 'tags' ? 'active' : ''}
+              onClick={() => setActiveView('tags')}
+            >
+              Tags
+            </button>
+            <button
+              className={activeView === 'accounts' ? 'active' : ''}
+              onClick={() => setActiveView('accounts')}
+            >
+              Accounts
+            </button>
+          </div>
+          <div className="nav-section">
+            <button
+              className={activeView === 'ai' ? 'active' : ''}
+              onClick={() => setActiveView('ai')}
+            >
+              Settings
+            </button>
+            <button
+              className={activeView === 'docs' ? 'active' : ''}
+              onClick={() => setActiveView('docs')}
+            >
+              Docs
+            </button>
+          </div>
         </nav>
       </aside>
       <div className="app">
         {activeView === 'dashboard' && (
-          <div className="card dashboard">
-            <div className="card-header">
-              <h2>Dashboard</h2>
-              <div className="actions">
-                <label className="picker">
-                  Month
-                  <select
-                    value={dashboardMonth}
-                    onChange={(event) => setDashboardMonth(event.target.value)}
-                    disabled={dashboardRange !== 'month'}
-                  >
-                    {dashboardMonths.length === 0 && (
-                      <option value="">No data</option>
-                    )}
-                    {dashboardMonths.map((month) => (
-                      <option key={month} value={month}>
-                        {month}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="picker">
-                  Range
-                  <select
-                    value={dashboardRange}
-                    onChange={(event) =>
-                      setDashboardRange(
-                        event.target.value as
-                          | 'month'
-                          | 'last1'
-                          | 'last3'
-                          | 'last6'
-                      )
-                    }
-                  >
-                    <option value="month">Selected month</option>
-                    <option value="last1">Last month</option>
-                    <option value="last3">Last 3 months</option>
-                    <option value="last6">Last 6 months</option>
-                  </select>
-                </label>
-                <button onClick={() => loadDashboardData()}>
-                  Refresh
-                </button>
-              </div>
-            </div>
-            {dashboardSummary ? (
-              <div className="dashboard-grid">
-                <div className="summary-grid">
-                  <div className="summary-card">
-                    <span className="label">Total spend</span>
-                    <strong>{formatCurrency(dashboardSummary.totalSpend)}</strong>
-                  </div>
-                  <div className="summary-card">
-                    <span className="label">Total income</span>
-                    <strong>{formatCurrency(dashboardSummary.totalIncome)}</strong>
-                  </div>
-                  <div className="summary-card">
-                    <span className="label">Net</span>
-                    <strong>{formatCurrency(dashboardSummary.net)}</strong>
-                  </div>
-                  <div className="summary-card">
-                    <span className="label">Categorized</span>
-                    <strong>
-                      {dashboardSummary.transactionCount > 0
-                        ? `${Math.round(
-                            (dashboardSummary.categorizedCount /
-                              dashboardSummary.transactionCount) *
-                              100
-                          )}%`
-                        : '0%'}
-                    </strong>
-                    <span className="muted">
-                      {dashboardSummary.uncategorizedCount} uncategorized
-                    </span>
-                    <button
-                      className="inline-action"
-                      onClick={() => setActiveView('categorization')}
-                    >
-                      Go to Categorization
-                    </button>
-                  </div>
-                </div>
-                <div className="chart-card">
-                  <div className="card-header">
-                    <h3>NET SPENDING BY CATEGORY</h3>
-                  </div>
-                  {dashboardNetCategories.length === 0 ? (
-                    <div className="muted">No negative net categories.</div>
-                  ) : (
-                    <div className="chart-scroll">
-                      <div
-                        className="chart"
-                        style={{
-                          width: Math.max(
-                            520,
-                            dashboardNetCategories.length * 120
-                          ),
-                        }}
-                      >
-                        <ResponsiveContainer width="100%" height={260}>
-                          <BarChart
-                            data={dashboardNetCategories}
-                            onClick={(state) => {
-                              const label = (state as { activeLabel?: string })?.activeLabel
-                              if (!label) {
-                                return
-                              }
-                              const match = dashboardNetCategories.find(
-                                (row) => row.categoryName === label
-                              )
-                              if (match) {
-                                handleDashboardCategorySelect(match.categoryId)
-                              }
-                            }}
-                          >
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis
-                              dataKey="categoryName"
-                              interval={0}
-                              angle={0}
-                              textAnchor="middle"
-                              height={40}
-                              tick={(props: any) => {
-                                const value = String(props.payload?.value ?? '')
-                                const label =
-                                  value.length > 12 ? `${value.slice(0, 12)}...` : value
-                                const match = dashboardNetCategories.find(
-                                  (row) => row.categoryName === value
-                                )
-                                return (
-                                  <g
-                                    transform={`translate(${props.x},${props.y})`}
-                                    onClick={() => {
-                                      if (match) {
-                                        handleDashboardCategorySelect(match.categoryId)
-                                      }
-                                    }}
-                                    style={{ cursor: match ? 'pointer' : 'default' }}
-                                  >
-                                    <text
-                                      x={0}
-                                      y={0}
-                                      dy={16}
-                                      textAnchor="middle"
-                                      fill="#6b7280"
-                                    >
-                                      {label}
-                                    </text>
-                                  </g>
-                                )
-                              }}
-                            />
-                            <YAxis
-                              tickFormatter={(value: number) =>
-                                formatCompactCurrency(value)
-                              }
-                            />
-                            <Tooltip
-                              formatter={(value, _name, item) => {
-                                const normalized = Array.isArray(value)
-                                  ? value[0] ?? ''
-                                  : value ?? ''
-                                return formatNetTooltip(
-                                  normalized,
-                                  String(_name ?? ''),
-                                  item as { payload?: { net?: number } }
-                                )
-                              }}
-                            />
-                            <Bar
-                              dataKey="netAbs"
-                              name="Net (abs)"
-                              fill="#f59e0b"
-                              onClick={(data) => {
-                                const payload = (data as { categoryId?: number }) ?? {}
-                                if (payload.categoryId) {
-                                  handleDashboardCategorySelect(payload.categoryId)
-                                }
-                              }}
-                            >
-                              {dashboardNetCategories.map((entry) => (
-                                <Cell
-                                  key={`net-${entry.categoryId}`}
-                                  fill={entry.categoryColor ?? '#f59e0b'}
-                                />
-                              ))}
-                            </Bar>
-                            <Customized component={renderDashboardCategoryClickLayer} />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div className="chart-card">
-                  <div className="card-header">
-                    <h3>
-                      TRANSACTIONS:
-                      {selectedDashboardCategory
-                        ? ` ${selectedDashboardCategory.categoryName}`
-                        : ''}
-                    </h3>
-                    <div className="actions">
-                      <label className="picker">
-                        Category
-                        <select
-                          value={dashboardCategorySelectionId ?? ''}
-                          onChange={(event) => {
-                            const value = Number(event.target.value)
-                            setDashboardCategorySelectionId(
-                              Number.isNaN(value) ? null : value
-                            )
-                            setDashboardCategoryPage(0)
-                          }}
-                          disabled={dashboardNetCategories.length === 0}
-                        >
-                          {dashboardNetCategories.length === 0 && (
-                            <option value="">No categories</option>
-                          )}
-                          {dashboardNetCategories.map((row) => (
-                            <option key={row.categoryId} value={row.categoryId}>
-                              {row.categoryName}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <button
-                        onClick={() => loadDashboardCategoryTransactions()}
-                        disabled={!dashboardCategorySelectionId}
-                      >
-                        Refresh
-                      </button>
-                      <button
-                        onClick={() => setDashboardCategoryPage(0)}
-                        disabled={dashboardCategoryPage === 0}
-                      >
-                        First
-                      </button>
-                      <button
-                        onClick={() =>
-                          setDashboardCategoryPage((p) => Math.max(0, p - 1))
-                        }
-                        disabled={dashboardCategoryPage === 0}
-                      >
-                        Prev
-                      </button>
-                      <span className="page-indicator">
-                        Page{' '}
-                        {dashboardCategoryTransactionsTotal === 0
-                          ? 0
-                          : dashboardCategoryPage + 1}
-                      </span>
-                      <button
-                        onClick={() => setDashboardCategoryPage((p) => p + 1)}
-                        disabled={
-                          dashboardCategoryTransactionsTotal === 0 ||
-                          (dashboardCategoryPage + 1) *
-                            pageSizeDashboardTransactions >=
-                            dashboardCategoryTransactionsTotal
-                        }
-                      >
-                        Next
-                      </button>
-                    </div>
-                  </div>
-                  {!dashboardCategorySelectionId ? (
-                    <div className="muted">
-                      Select a category in the chart to see transactions.
-                    </div>
-                  ) : dashboardCategoryTransactionsTotal === 0 ? (
-                    <div className="muted">No transactions for this category.</div>
-                  ) : (
-                    <div className="data-table dashboard-transactions">
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Date</th>
-                            <th>Payee</th>
-                            <th>Purpose</th>
-                            <th>Amount</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {dashboardCategoryTransactions.map((row) => (
-                            <tr key={row.id}>
-                              <td>{row.bookingDate}</td>
-                              <td>{row.payee ?? '-'}</td>
-                              <td className="purpose">{truncatePurpose(row.purpose, 100)}</td>
-                              <td className="amount">
-                                {row.amount.toFixed(2)} {row.currency}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      <div className="data-table-footer">
-                        Total: {dashboardCategoryTransactionsTotal}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="muted">No data yet.</div>
-            )}
-          </div>
+          <DashboardView
+            dashboardMonths={dashboardMonths}
+            dashboardMonth={dashboardMonth}
+            setDashboardMonth={setDashboardMonth}
+            dashboardRange={dashboardRange}
+            setDashboardRange={setDashboardRange}
+            dashboardGroupBy={dashboardGroupBy}
+            setDashboardGroupBy={setDashboardGroupBy}
+            dashboardSummary={dashboardSummary}
+            dashboardNetBreakdown={dashboardNetBreakdown}
+            dashboardCategorySelectionId={dashboardCategorySelectionId}
+            setDashboardCategorySelectionId={setDashboardCategorySelectionId}
+            dashboardCategoryPage={dashboardCategoryPage}
+            setDashboardCategoryPage={setDashboardCategoryPage}
+            pageSizeDashboardTransactions={pageSizeDashboardTransactions}
+            dashboardCategoryTransactions={dashboardCategoryTransactions}
+            dashboardCategoryTransactionsTotal={dashboardCategoryTransactionsTotal}
+            selectedDashboardBreakdown={selectedDashboardBreakdown}
+            loadDashboardData={loadDashboardData}
+            loadDashboardCategoryTransactions={loadDashboardCategoryTransactions}
+            handleDashboardCategorySelect={handleDashboardCategorySelect}
+            setActiveView={setActiveView}
+            formatCurrency={formatCurrency}
+            formatCompactCurrency={formatCompactCurrency}
+            truncatePurpose={truncatePurpose}
+            formatNetTooltip={formatNetTooltip}
+            renderDashboardCategoryClickLayer={renderDashboardCategoryClickLayer}
+          />
+        )}
+        {activeView === 'budget' && (
+          <BudgetView
+            categoriesAll={categoriesAll}
+            pushToast={pushToast}
+            categorizationVersion={categorizationVersion}
+            accountIds={selectedAccountIds}
+          />
         )}
         {activeView === 'transactions' && (
-          <>
-            <div className="card">
-              <div className="card-header">
-                <h2>Transactions</h2>
-                <div className="actions">
-                  <input
-                    type="text"
-                    placeholder="Search payee or purpose..."
-                    value={transactionSearch}
-                    onChange={(event) => setTransactionSearch(event.target.value)}
-                  />
-                  <button onClick={() => setImportModalOpen(true)}>
-                    Import Transactions
-                  </button>
-                  <button onClick={() => setPage(0)} disabled={page === 0}>
-                    First
-                  </button>
-                  <button
-                    onClick={() => setPage((p) => Math.max(0, p - 1))}
-                    disabled={page === 0}
-                  >
-                    Prev
-                  </button>
-                  <span className="page-indicator">Page {page + 1}</span>
-                  <button
-                    onClick={() => setPage((p) => p + 1)}
-                    disabled={
-                      (page + 1) * pageSizeTransactions >= transactionsTotal
-                    }
-                  >
-                    Next
-                  </button>
-                  <button onClick={loadTransactions} disabled={loadingTransactions}>
-                    {loadingTransactions ? 'Loading...' : 'Refresh'}
-                  </button>
-                </div>
-              </div>
-                <DataTable
-                  data={transactions}
-                  columns={transactionColumns}
-                  getRowId={(row) => String(row.id)}
-                  totalCount={transactionsTotal}
-                  emptyMessage="No transactions yet."
-                />
-            </div>
-          </>
+          <TransactionsView
+            transactions={transactions}
+            transactionsTotal={transactionsTotal}
+            transactionSearch={transactionSearch}
+            setTransactionSearch={setTransactionSearch}
+            page={page}
+            setPage={setPage}
+            pageSizeTransactions={pageSizeTransactions}
+            loadingTransactions={loadingTransactions}
+            loadTransactions={loadTransactions}
+            setImportModalOpen={setImportModalOpen}
+            transactionColumns={transactionColumns}
+          />
         )}
         {activeView === 'categorization' && (
-          <div className="card">
-            <div className="card-header">
-              <h2>Categorization</h2>
-              <div className="actions">
-                <button
-                  className={categorizationTab === 'uncategorized' ? 'active' : ''}
-                  onClick={() => setCategorizationTab('uncategorized')}
-                >
-                  Uncategorized
-                </button>
-                <button
-                  className={categorizationTab === 'categorized' ? 'active' : ''}
-                  onClick={() => setCategorizationTab('categorized')}
-                >
-                  Categorized
-                </button>
-              </div>
-            </div>
-            {categorizationTab === 'uncategorized' && (
-              <>
-                <div className="card-header subheader">
-                  <h3>Uncategorized</h3>
-                  <div className="actions">
-                    <button onClick={applyRules}>Apply Rules</button>
-                    <button onClick={suggestWithAi}>Suggest with AI</button>
-                    <button
-                      onClick={() => setUncategorizedPage(0)}
-                      disabled={uncategorizedPage === 0}
-                    >
-                      First
-                    </button>
-                    <button
-                      onClick={() => setUncategorizedPage((p) => Math.max(0, p - 1))}
-                      disabled={uncategorizedPage === 0}
-                    >
-                      Prev
-                    </button>
-                    <span className="page-indicator">Page {uncategorizedPage + 1}</span>
-                  <button
-                    onClick={() => setUncategorizedPage((p) => p + 1)}
-                    disabled={
-                      uncategorizedTotal === 0 ||
-                      (uncategorizedPage + 1) * pageSizeUncategorized >=
-                        uncategorizedTotal
-                    }
-                  >
-                    Next
-                  </button>
-                    <button onClick={loadUncategorized}>Refresh</button>
-                  </div>
-                </div>
-                {rulesStatus && <div className="status">{rulesStatus}</div>}
-                {aiStatus && <div className="status">{aiStatus}</div>}
-                <DataTable
-                  data={uncategorized}
-                  columns={uncategorizedColumns}
-                  getRowId={(row) => String(row.id)}
-                  totalCount={uncategorizedTotal}
-                  emptyMessage="All transactions are categorized."
-                />
-              </>
-            )}
-            {categorizationTab === 'categorized' && (
-              <>
-                <div className="card-header subheader">
-                  <h3>Categorized</h3>
-                  <div className="actions">
-                    <Select
-                      className="multi-select category-filter"
-                      classNamePrefix="rs"
-                      isMulti
-                      isSearchable
-                      options={categoryFilterOptions}
-                      value={categoryFilterOptions.filter((option) =>
-                        categorizedFilter.includes(option.value)
-                      )}
-                      onChange={(values) =>
-                        setCategorizedFilter(values.map((option) => option.value))
-                      }
-                      placeholder="Filter categories..."
-                      menuPortalTarget={document.body}
-                      menuPosition="fixed"
-                      styles={{
-                        control: (base, state) => ({
-                          ...base,
-                          backgroundColor: '#ffffff',
-                          borderColor: state.isFocused ? '#2563eb' : '#d1d5db',
-                          boxShadow: state.isFocused
-                            ? '0 0 0 1px #2563eb'
-                            : 'none',
-                          minHeight: 34,
-                        }),
-                        menu: (base) => ({
-                          ...base,
-                          backgroundColor: '#ffffff',
-                          border: '1px solid #e5e7eb',
-                          color: '#1f2937',
-                        }),
-                        menuPortal: (base) => ({
-                          ...base,
-                          zIndex: 9999,
-                        }),
-                        option: (base, state) => ({
-                          ...base,
-                          backgroundColor: state.isSelected
-                            ? '#2563eb'
-                            : state.isFocused
-                            ? '#eef2ff'
-                            : '#ffffff',
-                          color: state.isSelected ? '#ffffff' : '#1f2937',
-                        }),
-                        singleValue: (base) => ({ ...base, color: '#1f2937' }),
-                        placeholder: (base) => ({ ...base, color: '#6b7280' }),
-                        input: (base) => ({ ...base, color: '#1f2937' }),
-                        multiValue: (base) => ({
-                          ...base,
-                          backgroundColor: '#eef2ff',
-                          border: '1px solid #2563eb',
-                        }),
-                        multiValueLabel: (base) => ({
-                          ...base,
-                          color: '#1f2937',
-                        }),
-                        multiValueRemove: (base) => ({
-                          ...base,
-                          color: '#2563eb',
-                        }),
-                      }}
-                    />
-                    <button
-                      onClick={() => setCategorizedPage(0)}
-                      disabled={categorizedPage === 0}
-                    >
-                      First
-                    </button>
-                    <button
-                      onClick={() => setCategorizedPage((p) => Math.max(0, p - 1))}
-                      disabled={categorizedPage === 0}
-                    >
-                      Prev
-                    </button>
-                    <span className="page-indicator">
-                      Page {categorizedTotal === 0 ? 0 : categorizedPage + 1}
-                    </span>
-                    <button
-                      onClick={() => setCategorizedPage((p) => p + 1)}
-                      disabled={
-                        categorizedTotal === 0 ||
-                        (categorizedPage + 1) * pageSizeCategorized >=
-                          categorizedTotal
-                      }
-                    >
-                      Next
-                    </button>
-                    <button onClick={loadCategorized}>Refresh</button>
-                  </div>
-                </div>
-                <DataTable
-                  data={categorized}
-                  columns={categorizedColumns}
-                  getRowId={(row) => String(row.id)}
-                  totalCount={categorizedTotal}
-                  emptyMessage="No categorized transactions yet."
-                />
-              </>
-            )}
-          </div>
+          <CategorizationView
+            categorizationTab={categorizationTab}
+            setCategorizationTab={setCategorizationTab}
+            uncategorized={uncategorized}
+            uncategorizedTotal={uncategorizedTotal}
+            uncategorizedPage={uncategorizedPage}
+            setUncategorizedPage={setUncategorizedPage}
+            pageSizeUncategorized={pageSizeUncategorized}
+            categorized={categorized}
+            categorizedTotal={categorizedTotal}
+            categorizedPage={categorizedPage}
+            setCategorizedPage={setCategorizedPage}
+            pageSizeCategorized={pageSizeCategorized}
+            categorizedFilter={categorizedFilter}
+            setCategorizedFilter={setCategorizedFilter}
+            categoryFilterOptions={categoryFilterOptions}
+            rulesStatus={rulesStatus}
+            aiStatus={aiStatus}
+            aiSuggestLoading={aiSuggestLoading}
+            applyRules={applyRules}
+            createQuickRulesForAll={createQuickRulesForAll}
+            suggestWithAi={suggestWithAi}
+            loadUncategorized={loadUncategorized}
+            loadCategorized={loadCategorized}
+            uncategorizedColumns={uncategorizedColumns}
+            categorizedColumns={categorizedColumns}
+          />
         )}
         {activeView === 'categories' && (
-          <div className="card">
-              <div className="card-header">
-              <h2>Categories</h2>
-              <div className="actions">
-                <input
-                  type="text"
-                  placeholder="Search category..."
-                  value={categorySearch}
-                  onChange={(event) => setCategorySearch(event.target.value)}
-                />
-                <button onClick={() => setNewCategoryModalOpen(true)}>
-                  Add Category
-                </button>
-                <button onClick={loadCategories}>Refresh</button>
-                <button
-                  onClick={() => setCategoriesPage(0)}
-                  disabled={categoriesPage === 0}
-                >
-                  First
-                </button>
-                <button
-                  onClick={() => setCategoriesPage((p) => Math.max(0, p - 1))}
-                  disabled={categoriesPage === 0}
-                >
-                  Prev
-                </button>
-                <span className="page-indicator">
-                  Page {categoriesTotal === 0 ? 0 : categoriesPage + 1}
-                </span>
-                <button
-                  onClick={() => setCategoriesPage((p) => p + 1)}
-                  disabled={
-                    categoriesTotal === 0 ||
-                    (categoriesPage + 1) * pageSizeCategories >= categoriesTotal
-                  }
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-            {categoryStatus && <div className="status">{categoryStatus}</div>}
-            <DataTable
-              data={categories}
-              columns={categoryColumns}
-              getRowId={(row) => String(row.id)}
-              totalCount={categoriesTotal}
-              meta={{
-                categoryEdits,
-                setCategoryEdits,
-                saveCategory,
-                deleteCategoryRow,
-              }}
-              emptyMessage="No categories yet."
-            />
-          </div>
+          <CategoriesView
+            categories={categories}
+            categoriesTotal={categoriesTotal}
+            categorySearch={categorySearch}
+            setCategorySearch={setCategorySearch}
+            categoriesPage={categoriesPage}
+            setCategoriesPage={setCategoriesPage}
+            pageSizeCategories={pageSizeCategories}
+            categoryStatus={categoryStatus}
+            categoryEdits={categoryEdits}
+            setCategoryEdits={setCategoryEdits}
+            saveCategory={saveCategory}
+            deleteCategoryRow={deleteCategoryRow}
+            loadCategories={loadCategories}
+            setNewCategoryModalOpen={setNewCategoryModalOpen}
+            categoryColumns={categoryColumns}
+          />
         )}
         {activeView === 'rules' && (
-          <div className="card">
-            <div className="card-header">
-              <h2>Rules</h2>
-              <div className="actions">
-                <input
-                  type="text"
-                  placeholder="Search rules..."
-                  value={ruleSearch}
-                  onChange={(event) => setRuleSearch(event.target.value)}
-                />
-                <button onClick={() => setNewRuleModalOpen(true)}>Add Rule</button>
-                <button onClick={loadRules}>Refresh</button>
-                <button
-                  onClick={() => setRulesPage(0)}
-                  disabled={rulesPage === 0}
-                >
-                  First
-                </button>
-                <button
-                  onClick={() => setRulesPage((p) => Math.max(0, p - 1))}
-                  disabled={rulesPage === 0}
-                >
-                  Prev
-                </button>
-                <span className="page-indicator">
-                  Page {rulesTotal === 0 ? 0 : rulesPage + 1}
-                </span>
-                <button
-                  onClick={() => setRulesPage((p) => p + 1)}
-                  disabled={
-                    rulesTotal === 0 ||
-                    (rulesPage + 1) * pageSizeRules >= rulesTotal
-                  }
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-            <DataTable
-              data={rules}
-              columns={rulesColumns}
-              getRowId={(row) => String(row.id)}
-              totalCount={rulesTotal}
-              meta={{
-                ruleEdits,
-                setRuleEdits,
-                activeCategories,
-                saveRule: updateRule,
-                deleteRule: removeRule,
-              }}
-              emptyMessage="No rules yet."
-            />
-          </div>
+          <RulesView
+            rules={rules}
+            rulesTotal={rulesTotal}
+            ruleSearch={ruleSearch}
+            setRuleSearch={setRuleSearch}
+            rulesPage={rulesPage}
+            setRulesPage={setRulesPage}
+            pageSizeRules={pageSizeRules}
+            ruleEdits={ruleEdits}
+            setRuleEdits={setRuleEdits}
+            activeCategories={activeCategories}
+            tagOptions={tagOptions}
+            updateRule={updateRule}
+            removeRule={removeRule}
+            loadRules={loadRules}
+            setNewRuleModalOpen={setNewRuleModalOpen}
+            rulesColumns={rulesColumns}
+          />
+        )}
+        {activeView === 'tags' && (
+          <TagsView
+            tags={tags}
+            tagsTotal={tagsTotal}
+            tagSearch={tagSearch}
+            setTagSearch={setTagSearch}
+            tagsPage={tagsPage}
+            setTagsPage={setTagsPage}
+            pageSizeTags={pageSizeTags}
+            tagStatus={tagStatus}
+            tagEdits={tagEdits}
+            setTagEdits={setTagEdits}
+            saveTagRow={saveTagRow}
+            deleteTagRow={deleteTagRow}
+            loadTags={loadTags}
+            setNewTagModalOpen={setNewTagModalOpen}
+            tagColumns={tagColumns}
+          />
+        )}
+        {activeView === 'accounts' && (
+          <AccountsView
+            accounts={accounts}
+            accountEdits={accountEdits}
+            setAccountEdits={setAccountEdits}
+            saveAccount={saveAccount}
+            deleteAccountRow={deleteAccountRow}
+            loadAccounts={loadAccounts}
+            accountColumns={accountColumns}
+          />
         )}
         {activeView === 'ai' && (
-          <div className="card">
-            <div className="card-header">
-              <h2>AI Settings</h2>
-              <button onClick={loadAiSettings}>Refresh</button>
-            </div>
-            <div className="status">
-              <strong>API key:</strong>{' '}
-              {aiKeyPresent === null
-                ? 'Checking...'
-                : aiKeyPresent
-                ? 'Present'
-                : 'Missing'}
-            </div>
-            {aiKeyPresent === false && (
-              <div className="status warning">
-                OPENAI_API_KEY is not set. AI suggestions will not work until
-                you set it in your environment.
-              </div>
-            )}
-            {aiSettings && (
-              <div className="ai-form">
-                <label>
-                  Model
-                  <input
-                    type="text"
-                    value={aiSettings.model}
-                    onChange={(event) =>
-                      setAiSettings({
-                        ...aiSettings,
-                        model: event.target.value,
-                      })
-                    }
-                  />
-                </label>
-                <label className="ai-checkbox">
-                  Enabled
-                  <input
-                    type="checkbox"
-                    checked={aiSettings.enabled === 1}
-                    onChange={(event) =>
-                      setAiSettings({
-                        ...aiSettings,
-                        enabled: event.target.checked ? 1 : 0,
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  Confidence threshold
-                  <input
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={aiSettings.confidenceThreshold}
-                    onChange={(event) =>
-                      setAiSettings({
-                        ...aiSettings,
-                        confidenceThreshold: Number(event.target.value),
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  Input cost ($ per 1M tokens)
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.000001}
-                    value={aiSettings.inputCostPer1M ?? ''}
-                    onChange={(event) =>
-                      setAiSettings({
-                        ...aiSettings,
-                        inputCostPer1M:
-                          event.target.value === ''
-                            ? null
-                            : Number(event.target.value),
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  Output cost ($ per 1M tokens)
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.000001}
-                    value={aiSettings.outputCostPer1M ?? ''}
-                    onChange={(event) =>
-                      setAiSettings({
-                        ...aiSettings,
-                        outputCostPer1M:
-                          event.target.value === ''
-                            ? null
-                            : Number(event.target.value),
-                      })
-                    }
-                  />
-                </label>
-                <button
-                  onClick={async () => {
-                    const updated = await window.api.ai.updateSettings({
-                      model: aiSettings.model,
-                      enabled: aiSettings.enabled,
-                      confidenceThreshold: aiSettings.confidenceThreshold,
-                      inputCostPer1M: aiSettings.inputCostPer1M,
-                      outputCostPer1M: aiSettings.outputCostPer1M,
-                    })
-                    setAiSettings({
-                      model: updated.model,
-                      enabled: updated.enabled,
-                      confidenceThreshold: updated.confidenceThreshold,
-                      inputCostPer1M: updated.inputCostPer1M,
-                      outputCostPer1M: updated.outputCostPer1M,
-                    })
-                  }}
-                >
-                  Save
-                </button>
-              </div>
-            )}
-            <div className="ai-requests">
-              <h3>AI Requests</h3>
-              <div className="data-table">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Time</th>
-                      <th>Status</th>
-                      <th>Model</th>
-                      <th>Tokens</th>
-                      <th>Cost</th>
-                      <th>Details</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {aiRequests.length === 0 ? (
-                      <tr>
-                        <td className="empty" colSpan={6}>
-                          No AI requests yet.
-                        </td>
-                      </tr>
-                    ) : (
-                      aiRequests.map((req) => (
-                        <tr key={req.id}>
-                          <td>{req.createdAt}</td>
-                          <td>{req.status}</td>
-                          <td>{req.model ?? '-'}</td>
-                          <td>
-                            {req.inputTokens != null && req.outputTokens != null
-                              ? `${req.inputTokens}/${req.outputTokens}/${req.totalTokens ?? req.inputTokens + req.outputTokens}`
-                              : '-'}
-                          </td>
-                          <td>
-                            {req.costUsd != null ? `$${req.costUsd.toFixed(6)}` : '-'}
-                          </td>
-                          <td>
-                            <details>
-                              <summary>View</summary>
-                              {req.error && (
-                                <div className="muted">Error: {req.error}</div>
-                              )}
-                              {req.requestPayload && (
-                                <pre className="payload">
-                                  {req.requestPayload}
-                                </pre>
-                              )}
-                              {req.responsePayload && (
-                                <pre className="payload">
-                                  {req.responsePayload}
-                                </pre>
-                              )}
-                            </details>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+          <AiSettingsView
+            aiKeyStatus={aiKeyStatus}
+            aiSettings={aiSettings}
+            setAiSettings={setAiSettings}
+            aiRequests={aiRequests}
+            aiRequestsTotal={aiRequestsTotal}
+            aiRequestsPage={aiRequestsPage}
+            setAiRequestsPage={setAiRequestsPage}
+            pageSizeAiRequests={pageSizeAiRequests}
+            loadAiRequests={loadAiRequests}
+            loadAiSettings={loadAiSettings}
+            clearAndReset={clearAndReset}
+            clearTransactions={clearTransactions}
+          />
         )}
+        {activeView === 'docs' && <DocsView />}
       {ruleDraft && (
         <div className="modal-backdrop">
           <div className="modal">
@@ -2632,6 +2997,7 @@ function App() {
                   <option value="payee">Payee</option>
                   <option value="purpose">Purpose</option>
                   <option value="iban">IBAN</option>
+                  <option value="method">Method</option>
                   <option value="bic">BIC</option>
                   <option value="amount">Amount</option>
                   <option value="direction">Direction</option>
@@ -2679,6 +3045,28 @@ function App() {
                     </option>
                   ))}
                 </select>
+              </label>
+              <label>
+                Tags
+                <CreatableSelect
+                  className="multi-select"
+                  classNamePrefix="rs"
+                  isMulti
+                  isSearchable
+                  options={tagOptions}
+                  value={tagOptions.filter((option) => ruleDraft.tagIds.includes(option.value))}
+                  onChange={(values) =>
+                    setRuleDraft({
+                      ...ruleDraft,
+                      tagIds: values.map((option) => option.value),
+                    })
+                  }
+                  onCreateOption={createTagForRuleDraft}
+                  placeholder="Select or create tags..."
+                  menuPortalTarget={document.body}
+                  menuPosition="fixed"
+                  styles={multiSelectStyles}
+                />
               </label>
               <label>
                 Priority
@@ -2753,6 +3141,7 @@ function App() {
                   <option value="payee">Payee</option>
                   <option value="purpose">Purpose</option>
                   <option value="iban">IBAN</option>
+                  <option value="method">Method</option>
                   <option value="bic">BIC</option>
                   <option value="amount">Amount</option>
                   <option value="direction">Direction</option>
@@ -2801,6 +3190,61 @@ function App() {
                     </option>
                   ))}
                 </select>
+              </label>
+              <label>
+                Tags
+                <Select
+                  className="multi-select"
+                  classNamePrefix="rs"
+                  isMulti
+                  isSearchable
+                  options={tagOptions}
+                  value={tagOptions.filter((option) => newRule.tagIds.includes(option.value))}
+                  onChange={(values) =>
+                    setNewRule({
+                      ...newRule,
+                      tagIds: values.map((option) => option.value),
+                    })
+                  }
+                  placeholder="Select tags..."
+                  menuPortalTarget={document.body}
+                  menuPosition="fixed"
+                  styles={{
+                    control: (base, state) => ({
+                      ...base,
+                      backgroundColor: '#ffffff',
+                      borderColor: state.isFocused ? '#2563eb' : '#d1d5db',
+                      boxShadow: state.isFocused ? '0 0 0 1px #2563eb' : 'none',
+                      minHeight: 34,
+                    }),
+                    menu: (base) => ({
+                      ...base,
+                      backgroundColor: '#ffffff',
+                      border: '1px solid #e5e7eb',
+                      color: '#1f2937',
+                    }),
+                    menuPortal: (base) => ({ ...base, zIndex: 9999 }),
+                    option: (base, state) => ({
+                      ...base,
+                      backgroundColor: state.isSelected
+                        ? '#2563eb'
+                        : state.isFocused
+                        ? '#eef2ff'
+                        : '#ffffff',
+                      color: state.isSelected ? '#ffffff' : '#1f2937',
+                    }),
+                    singleValue: (base) => ({ ...base, color: '#1f2937' }),
+                    placeholder: (base) => ({ ...base, color: '#6b7280' }),
+                    input: (base) => ({ ...base, color: '#1f2937' }),
+                    multiValue: (base) => ({
+                      ...base,
+                      backgroundColor: '#eef2ff',
+                      border: '1px solid #2563eb',
+                    }),
+                    multiValueLabel: (base) => ({ ...base, color: '#1f2937' }),
+                    multiValueRemove: (base) => ({ ...base, color: '#2563eb' }),
+                  }}
+                />
               </label>
               <label>
                 Priority
@@ -2874,6 +3318,31 @@ function App() {
           </div>
         </div>
       )}
+      {newTagModalOpen && (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div className="modal-header">
+              <h3>Add Tag</h3>
+              <button onClick={() => setNewTagModalOpen(false)}>Close</button>
+            </div>
+            <div className="modal-body">
+              <label>
+                Name
+                <input
+                  type="text"
+                  placeholder="Tag name"
+                  value={newTagName}
+                  onChange={(event) => setNewTagName(event.target.value)}
+                />
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setNewTagModalOpen(false)}>Cancel</button>
+              <button onClick={createTag}>Create</button>
+            </div>
+          </div>
+        </div>
+      )}
       {importModalOpen && (
         <div className="modal-backdrop">
           <div className="modal">
@@ -2887,11 +3356,15 @@ function App() {
                 <select
                   value={importProvider}
                   onChange={(event) =>
-                    setImportProvider(event.target.value as 'dkb' | 'ing')
+                    setImportProvider(
+                      event.target.value as 'dkb' | 'ing' | 'sparkasse' | 'volksbank'
+                    )
                   }
                 >
                   <option value="dkb">DKB</option>
                   <option value="ing">ING</option>
+                  <option value="sparkasse">Sparkasse</option>
+                  <option value="volksbank">Volksbank</option>
                 </select>
               </label>
               <div className="actions">
@@ -2948,6 +3421,46 @@ function App() {
           </div>
         </div>
       )}
+      </div>
+
+      <datalist id="tag-suggestions">
+        {allTags.map((tag) => (
+          <option key={tag.id} value={tag.name} />
+        ))}
+      </datalist>
+
+      {/* Floating chat */}
+      <div className="chat-float-container">
+        {chatOpen && (
+          <div className="chat-float-panel">
+            <div className="chat-float-header">
+              <span>AI Assistant</span>
+              <button className="chat-float-close" onClick={() => setChatOpen(false)}>✕</button>
+            </div>
+            <ChatView
+              activeView={activeView}
+              onDataChanged={() => {
+                loadTransactions()
+                loadUncategorized()
+                loadCategorized()
+                loadCategories()
+                loadCategoriesAll()
+                loadRules()
+                loadAllTags()
+                loadDashboardMonths()
+                loadDashboardData()
+                setCategorizationVersion((v) => v + 1)
+              }}
+            />
+          </div>
+        )}
+        <button
+          className={`chat-float-btn ${chatOpen ? 'chat-float-btn-open' : ''}`}
+          onClick={() => setChatOpen((v) => !v)}
+          title="AI Assistant"
+        >
+          {chatOpen ? '✕' : '✦'}
+        </button>
       </div>
     </div>
   )

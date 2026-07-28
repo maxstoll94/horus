@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Horus app icon">
+  <defs>
+    <linearGradient id="sun" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#f97316"/>
+    </linearGradient>
+    <linearGradient id="wing" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+  </defs>
+  <!-- macOS Big Sur-style rounded-square base (~18% corner radius) so the
+       glyph matches the visual weight of native app icons instead of
+       floating on a fully transparent canvas. -->
+  <rect x="0" y="0" width="1024" height="1024" rx="185" ry="185" fill="#ffffff"/>
+  <!-- The wordmark-paired glyph is naturally wide (~1.47:1), which can't fill
+       a square icon evenly at any scale — it either leaves big top/bottom
+       margins or hugs the left/right edges. So for the icon specifically,
+       the wings are compressed horizontally around their own center (sun
+       left uncompressed, so it stays circular) to make the content bbox
+       ~square, then scaled/centered to fill evenly like other app icons. -->
+  <g transform="translate(-65.7, -11.55) scale(9.026)">
+    <circle cx="64" cy="44" r="22" fill="url(#sun)"/>
+    <g transform="translate(64,0) scale(0.75,1) translate(-64,0)">
+      <path d="M16 74c20-10 40-14 48-14s28 4 48 14" fill="none" stroke="url(#wing)" stroke-width="10" stroke-linecap="round"/>
+      <path d="M24 90c16-8 32-11 40-11s24 3 40 11" fill="none" stroke="#93c5fd" stroke-width="8" stroke-linecap="round"/>
+      <path d="M64 58l-10 24h20z" fill="#1f2937"/>
+    </g>
+  </g>
+</svg>
