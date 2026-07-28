@@ -40,18 +40,5 @@
     "vite-plugin-electron": "^0.28.6",
     "vite-plugin-electron-renderer": "^0.14.5"
   },
-  "main": "dist-electron/main.js",
-  "build": {
-    "appId": "com.horus.app",
-    "productName": "Horus",
-    "mac": {
-      "icon": "public/horus-icon.icns"
-    },
-    "win": {
-      "icon": "public/horus-icon.ico"
-    },
-    "linux": {
-      "icon": "public/horus-icon-256.png"
-    }
-  }
+  "main": "dist-electron/main.js"
 }

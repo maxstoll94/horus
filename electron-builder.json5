@@ -19,6 +19,7 @@
     }
   ],
   "mac": {
+    "icon": "public/horus-icon.icns",
     "target": [
       {
         "target": "dmg",
@@ -50,6 +51,7 @@
     "deleteAppDataOnUninstall": false
   },
   "linux": {
+    "icon": "public/horus-icon-256.png",
     "target": [
       "AppImage"
     ],
