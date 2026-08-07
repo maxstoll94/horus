@@ -500,6 +500,8 @@ function App() {
   const loadAllTags = async () => {
     const result = await window.api.tags.list({ limit: 10000 })
     setAllTags(result.rows)
+    loadTags()
+    loadDashboardData()
   }
 
   const addTagToTransaction = async (transactionId: number) => {
@@ -2089,7 +2091,7 @@ function App() {
 
   const clearAndReset = async () => {
     const confirmed = window.confirm(
-      'This will permanently delete ALL transactions, rules, budgets, and imports, and restore only the 12 default categories. This cannot be undone. Continue?'
+      'This will permanently delete ALL transactions, rules, budgets, and imports, and restore only the 14 default categories. This cannot be undone. Continue?'
     )
     if (!confirmed) return
     await window.api.db.clearAndReset()
@@ -2506,6 +2508,7 @@ function App() {
 
     setRulesStatus(`Creating ${created} rule${created > 1 ? 's' : ''}...`)
     await applyRules()
+    loadRules()
     pushToast(`${created} rule${created > 1 ? 's' : ''} created and applied.`, 'success')
   }
 
@@ -2532,6 +2535,7 @@ function App() {
 
     setRuleDraft(null)
     await applyRules()
+    loadRules()
     setRulesStatusModal('Custom rule created and applied.')
     pushToast('Rule created and applied.', 'success')
   }
@@ -2843,6 +2847,10 @@ function App() {
             pushToast={pushToast}
             categorizationVersion={categorizationVersion}
             accountIds={selectedAccountIds}
+            loadTransactions={loadTransactions}
+            loadDashboardData={loadDashboardData}
+            loadUncategorized={loadUncategorized}
+            loadCategorized={loadCategorized}
           />
         )}
         {activeView === 'transactions' && (

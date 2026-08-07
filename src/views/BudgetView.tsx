@@ -6,6 +6,10 @@ type Props = {
   pushToast: (message: string, tone?: 'success' | 'error' | 'info') => void
   categorizationVersion: number
   accountIds: number[]
+  loadTransactions: () => void
+  loadDashboardData: () => void
+  loadUncategorized: () => void
+  loadCategorized: () => void
 }
 
 const GROUP_LABELS: Record<string, string> = {
@@ -18,7 +22,7 @@ const GROUP_LABELS: Record<string, string> = {
 
 const GROUP_ORDER = ['income', 'fixed_expense', 'variable_expense', 'savings', 'transfer']
 
-export function BudgetView({ categoriesAll, pushToast, categorizationVersion, accountIds }: Props) {
+export function BudgetView({ categoriesAll, pushToast, categorizationVersion, accountIds, loadTransactions, loadDashboardData, loadUncategorized, loadCategorized }: Props) {
   const now = new Date()
   const currentYear = String(now.getFullYear())
   const currentMonth = `${currentYear}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -168,6 +172,10 @@ export function BudgetView({ categoriesAll, pushToast, categorizationVersion, ac
     setManualTxOpen(false)
     setManualTx({ bookingDate: currentMonth + '-01', amount: '', currency: 'EUR', payee: '', purpose: '', account: '', categoryIds: [] })
     loadActuals()
+    loadTransactions()
+    loadDashboardData()
+    loadUncategorized()
+    loadCategorized()
     pushToast('Transaction added.', 'success')
   }
 

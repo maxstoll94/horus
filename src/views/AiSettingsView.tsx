@@ -231,7 +231,7 @@ export function AiSettingsView({
           <div className="danger-zone-row">
             <div>
               <strong>Reset database</strong>
-              <p>Deletes everything and restores the default categories and starter rules.</p>
+              <p>Deletes everything and restores the default categories.</p>
             </div>
             <button className="danger-btn" onClick={clearAndReset}>Reset All Data</button>
           </div>

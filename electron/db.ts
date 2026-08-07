@@ -2742,7 +2742,7 @@ export function updateManualTransaction(id: number, updates: {
   db.prepare(`
     UPDATE transactions
     SET account = ?, booking_date = ?, amount = ?, currency = ?, payee = ?, purpose = ?, updated_at = datetime('now')
-    WHERE id = ? AND source = 'manual'
+    WHERE id = ?
   `).run(
     updates.account !== undefined ? updates.account : current.account,
     updates.bookingDate ?? current.bookingDate,
