@@ -1,7 +1,7 @@
 {
   "name": "horus",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Personal finance categorization and insights for offline use.",
   "author": "Horus",
   "type": "module",
