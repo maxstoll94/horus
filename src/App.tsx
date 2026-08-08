@@ -342,6 +342,7 @@ function App() {
     'month' | 'last1' | 'last3' | 'last6'
   >('month')
   const [dashboardGroupBy, setDashboardGroupBy] = useState<'category' | 'tag'>('category')
+  const [dashboardBreakdownMode, setDashboardBreakdownMode] = useState<'spending' | 'income'>('spending')
   const [dashboardSummary, setDashboardSummary] = useState<{
     month: string
     totalIncome: number
@@ -413,14 +414,16 @@ function App() {
         ...row,
         net: row.totalIncome - row.totalSpend,
       }))
-      .filter((row) => row.net < 0)
+      .filter((row) =>
+        dashboardBreakdownMode === 'spending' ? row.net < 0 : row.net > 0
+      )
     const withAbs = mapped.map((row) => ({
       ...row,
       netAbs: Math.abs(row.net),
     }))
     withAbs.sort((a, b) => b.netAbs - a.netAbs)
     return withAbs
-  }, [dashboardBreakdownSource])
+  }, [dashboardBreakdownSource, dashboardBreakdownMode])
 
   const selectedDashboardBreakdown = useMemo(
     () =>
@@ -2820,6 +2823,8 @@ function App() {
             setDashboardRange={setDashboardRange}
             dashboardGroupBy={dashboardGroupBy}
             setDashboardGroupBy={setDashboardGroupBy}
+            dashboardBreakdownMode={dashboardBreakdownMode}
+            setDashboardBreakdownMode={setDashboardBreakdownMode}
             dashboardSummary={dashboardSummary}
             dashboardNetBreakdown={dashboardNetBreakdown}
             dashboardCategorySelectionId={dashboardCategorySelectionId}

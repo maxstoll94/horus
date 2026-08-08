@@ -48,6 +48,8 @@ type Props = {
   setDashboardRange: (range: 'month' | 'last1' | 'last3' | 'last6') => void
   dashboardGroupBy: 'category' | 'tag'
   setDashboardGroupBy: (groupBy: 'category' | 'tag') => void
+  dashboardBreakdownMode: 'spending' | 'income'
+  setDashboardBreakdownMode: (mode: 'spending' | 'income') => void
   dashboardSummary: DashboardSummary | null
   dashboardNetBreakdown: DashboardBreakdown[]
   dashboardCategorySelectionId: number | null
@@ -77,6 +79,8 @@ export function DashboardView({
   setDashboardRange,
   dashboardGroupBy,
   setDashboardGroupBy,
+  dashboardBreakdownMode,
+  setDashboardBreakdownMode,
   dashboardSummary,
   dashboardNetBreakdown,
   dashboardCategorySelectionId,
@@ -152,6 +156,20 @@ export function DashboardView({
               <option value="tag">Tag</option>
             </select>
           </label>
+          <label className="picker">
+            Show
+            <select
+              value={dashboardBreakdownMode}
+              onChange={(event) =>
+                setDashboardBreakdownMode(
+                  event.target.value as 'spending' | 'income'
+                )
+              }
+            >
+              <option value="spending">Net Spending</option>
+              <option value="income">Net Income</option>
+            </select>
+          </label>
           <button onClick={() => loadDashboardData()}>
             Refresh
           </button>
@@ -196,13 +214,20 @@ export function DashboardView({
           </div>
           <div className="chart-card">
             <div className="card-header">
-              <h3>NET SPENDING BY {groupLabel.toUpperCase()}</h3>
+              <h3>
+                NET {dashboardBreakdownMode === 'spending' ? 'SPENDING' : 'INCOME'} BY{' '}
+                {groupLabel.toUpperCase()}
+              </h3>
             </div>
             {dashboardNetBreakdown.length === 0 ? (
               <div className="muted">
-                {dashboardGroupBy === 'category'
-                  ? 'No negative net categories.'
-                  : 'No negative net tags — only tagged transactions are included here.'}
+                {dashboardBreakdownMode === 'spending'
+                  ? dashboardGroupBy === 'category'
+                    ? 'No negative net categories.'
+                    : 'No negative net tags — only tagged transactions are included here.'
+                  : dashboardGroupBy === 'category'
+                  ? 'No positive net categories.'
+                  : 'No positive net tags — only tagged transactions are included here.'}
               </div>
             ) : (
               <div className="chart-scroll">
@@ -287,8 +312,8 @@ export function DashboardView({
                       />
                       <Bar
                         dataKey="netAbs"
-                        name="Net (abs)"
-                        fill="#f59e0b"
+                        name={dashboardBreakdownMode === 'spending' ? 'Net spending' : 'Net income'}
+                        fill={dashboardBreakdownMode === 'spending' ? '#f59e0b' : '#10b981'}
                         onClick={(data) => {
                           const payload = (data as { id?: number }) ?? {}
                           if (payload.id) {
@@ -299,7 +324,7 @@ export function DashboardView({
                         {dashboardNetBreakdown.map((entry) => (
                           <Cell
                             key={`net-${entry.id}`}
-                            fill={entry.color ?? '#f59e0b'}
+                            fill={entry.color ?? (dashboardBreakdownMode === 'spending' ? '#f59e0b' : '#10b981')}
                           />
                         ))}
                       </Bar>
