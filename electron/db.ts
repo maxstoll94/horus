@@ -283,7 +283,7 @@ function applyMigrations(db: DatabaseInstance) {
         );
 
         INSERT INTO ai_settings (id, model, enabled, confidence_threshold)
-        VALUES (1, 'gpt-4o-mini-2024-07-18', 0, 0.85)
+        VALUES (1, 'gpt-4.1-mini', 0, 0.85)
         ON CONFLICT(id) DO NOTHING;
 
         INSERT INTO schema_migrations (version) VALUES (4);
@@ -2248,7 +2248,7 @@ export function getAiSettings() {
           input_cost_per_1m,
           output_cost_per_1m
         )
-        VALUES (1, 'gpt-4o-mini-2024-07-18', 0, 0.9, 0.15, 0.6)
+        VALUES (1, 'gpt-4.1-mini', 0, 0.9, 0.15, 0.6)
       `
     ).run()
     return getAiSettings()
