@@ -1,5 +1,5 @@
-import { listBankConnectionsWithAccounts, insertSyncedTransactions, updateBankConnection, applyRulesToUncategorized } from '../../db'
-import { getAccountTransactions, SessionExpiredError } from './client'
+import { listBankConnectionsWithAccounts, insertSyncedTransactions, updateBankConnection, maybeUpdateAccountAnchor, applyRulesToUncategorized } from '../../db'
+import { getAccountTransactions, getAccountBalances, SessionExpiredError } from './client'
 import { mapTransaction } from './mapper'
 import type { EnableBankingCredentials, Transaction } from './types'
 
@@ -23,6 +23,30 @@ function overlapDateFrom(syncFromDate: string | null, lastBookedDate: string | n
     .slice(0, 10)
   if (!syncFromDate) return overlap
   return overlap > syncFromDate ? overlap : syncFromDate
+}
+
+// Keeps the account's anchor balance fresh from the bank's own ledger on
+// every sync — same maybeUpdateAccountAnchor() the CSV importers use, so it
+// only ever moves forward and stays consistent with currentBalance's
+// anchor-plus-booked-transactions-since model. CLBD ("Accounting balance")
+// is the settled/closing figure, matching what CSV balance lines represent —
+// not ITAV ("Interim available", includes pending holds) or XPCD ("Expected").
+// Best-effort: a balance-fetch hiccup shouldn't fail a sync that otherwise
+// succeeded, but a SessionExpiredError still needs to propagate for reauth.
+async function syncAccountAnchor(
+  credentials: EnableBankingCredentials,
+  uid: string,
+  accountId: number
+): Promise<void> {
+  try {
+    const { balances } = await getAccountBalances(credentials, uid)
+    const accounting = balances.find((b) => b.balance_type === 'CLBD')
+    if (accounting?.reference_date) {
+      maybeUpdateAccountAnchor(accountId, Number.parseFloat(accounting.balance_amount.amount), accounting.reference_date)
+    }
+  } catch (error) {
+    if (error instanceof SessionExpiredError) throw error
+  }
 }
 
 // Fetches are all held in memory and committed in one transaction per
@@ -66,6 +90,8 @@ export async function syncConnection(
       const rows = transactions.filter((t) => t.status === 'BOOK').map((t) => mapTransaction(t, account.accountName))
       const { inserted, skipped } = insertSyncedTransactions(account.id, account.accountId, rows)
       perAccount.push({ bankAccountId: account.id, inserted, skipped })
+
+      await syncAccountAnchor(credentials, account.uid, account.accountId)
     } catch (error) {
       if (error instanceof SessionExpiredError) {
         needsReauth = true
