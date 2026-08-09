@@ -202,6 +202,33 @@ contextBridge.exposeInMainWorld('api', {
     }) => ipcRenderer.invoke('accounts:update', payload),
     delete: (payload: { id: number }) => ipcRenderer.invoke('accounts:delete', payload),
   },
+  banks: {
+    credentialsStatus: () => ipcRenderer.invoke('banks:credentials:status'),
+    pickKeyFile: () => ipcRenderer.invoke('banks:pick-key-file'),
+    setCredentials: (payload: { appId: string; keyPath: string }) =>
+      ipcRenderer.invoke('banks:credentials:set', payload),
+    testCredentials: () => ipcRenderer.invoke('banks:credentials:test'),
+    listAspsps: (country?: string) => ipcRenderer.invoke('banks:list-aspsps', country),
+    connect: (payload: {
+      aspspName: string
+      aspspCountry: string
+      maximumConsentValidity: number
+      connectionId?: number
+    }) => ipcRenderer.invoke('banks:connect', payload),
+    connectCancel: () => ipcRenderer.invoke('banks:connect-cancel'),
+    completeAuth: (payload: { redirectUrl: string }) => ipcRenderer.invoke('banks:complete-auth', payload),
+    onConnectStatus: (callback: (status: { type: string; url?: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: { type: string; url?: string }) => callback(status)
+      ipcRenderer.on('banks:connect-status', handler)
+      return () => ipcRenderer.off('banks:connect-status', handler)
+    },
+    listConnections: () => ipcRenderer.invoke('banks:list-connections'),
+    updateAccount: (payload: { id: number; syncFromDate?: string | null; isEnabled?: boolean }) =>
+      ipcRenderer.invoke('banks:accounts:update', payload),
+    sync: (payload: { connectionId: number }) => ipcRenderer.invoke('banks:sync', payload),
+    disconnect: (payload: { connectionId: number }) => ipcRenderer.invoke('banks:disconnect', payload),
+    deleteConnection: (payload: { connectionId: number }) => ipcRenderer.invoke('banks:delete-connection', payload),
+  },
   budgets: {
     list: (payload: { period: string }) => ipcRenderer.invoke('budgets:list', payload),
     upsert: (payload: { categoryId: number; period: string; cadence: string; amount: number; notes?: string | null }) =>

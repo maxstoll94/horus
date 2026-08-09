@@ -21,6 +21,12 @@ coverage
 *.db-wal
 .env
 
+# Enable Banking test script secrets/data (never commit real credentials)
+scripts/eb-test/*.pem
+scripts/eb-test/config.json
+scripts/eb-test/session.json
+scripts/eb-test/output/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

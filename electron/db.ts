@@ -9,7 +9,7 @@ const Database = require('better-sqlite3') as typeof import('better-sqlite3')
 type DatabaseInstance = import('better-sqlite3').Database
 type RunResult = import('better-sqlite3').RunResult
 
-const SCHEMA_VERSION = 22
+const SCHEMA_VERSION = 23
 let dbInstance: DatabaseInstance | null = null
 
 function getDatabasePath() {
@@ -610,6 +610,61 @@ function applyMigrations(db: DatabaseInstance) {
       }
       db.exec(`INSERT INTO schema_migrations (version) VALUES (22);`)
     }
+
+    if (currentVersion < 23) {
+      // Live bank sync (Enable Banking): connections map to a consent/session,
+      // bank_accounts links an ASPSP account (session-scoped uid) to the
+      // existing accounts table so transaction FKs and CSV/API dedup share
+      // one identity per IBAN. Synced transactions reuse transactions.account_id.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS secrets (
+          key TEXT PRIMARY KEY,
+          value_encrypted BLOB NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS bank_connections (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          provider TEXT NOT NULL,
+          aspsp_name TEXT NOT NULL,
+          aspsp_country TEXT NOT NULL,
+          session_id TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          valid_until TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS bank_accounts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          connection_id INTEGER NOT NULL REFERENCES bank_connections(id) ON DELETE CASCADE,
+          account_id INTEGER NOT NULL UNIQUE REFERENCES accounts(id) ON DELETE CASCADE,
+          uid TEXT NOT NULL,
+          sync_from_date TEXT,
+          last_synced_at TEXT,
+          last_booked_date TEXT,
+          is_enabled INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT,
+          UNIQUE (connection_id, uid)
+        );
+      `)
+
+      // transactions.source already distinguishes 'import' | 'manual' (since v11) —
+      // synced rows reuse it as a third value ('api') rather than adding a
+      // second, overlapping column.
+      const txCols23 = db.prepare(`PRAGMA table_info(transactions);`).all() as { name: string }[]
+      if (!txCols23.some((col) => col.name === 'bank_transaction_id')) {
+        db.exec(`ALTER TABLE transactions ADD COLUMN bank_transaction_id TEXT;`)
+      }
+
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_bank_txn
+          ON transactions(account_id, bank_transaction_id)
+          WHERE bank_transaction_id IS NOT NULL;
+        INSERT INTO schema_migrations (version) VALUES (23);
+      `)
+    }
   })()
 }
 
@@ -863,6 +918,352 @@ export function deleteAccount(id: number) {
     return result.changes > 0
   })
   return tx()
+}
+
+// --- Live bank sync (Enable Banking) ---------------------------------------
+
+export function getSecret(key: string): Buffer | null {
+  const db = initializeDatabase()
+  const row = db.prepare(`SELECT value_encrypted FROM secrets WHERE key = ?`).get(key) as
+    | { value_encrypted: Buffer }
+    | undefined
+  return row?.value_encrypted ?? null
+}
+
+export function setSecret(key: string, value: Buffer) {
+  const db = initializeDatabase()
+  db.prepare(`
+    INSERT INTO secrets (key, value_encrypted, updated_at) VALUES (?, ?, datetime('now'))
+    ON CONFLICT (key) DO UPDATE SET value_encrypted = excluded.value_encrypted, updated_at = datetime('now')
+  `).run(key, value)
+}
+
+export function deleteSecret(key: string) {
+  const db = initializeDatabase()
+  db.prepare(`DELETE FROM secrets WHERE key = ?`).run(key)
+}
+
+export type BankConnectionStatus = 'pending' | 'active' | 'expired' | 'revoked'
+
+export type BankAccountRow = {
+  id: number
+  connectionId: number
+  accountId: number
+  uid: string
+  accountName: string
+  accountIdentifier: string | null
+  syncFromDate: string | null
+  lastSyncedAt: string | null
+  lastBookedDate: string | null
+  isEnabled: boolean
+  createdAt: string
+  updatedAt: string | null
+}
+
+export type BankConnectionRow = {
+  id: number
+  provider: string
+  aspspName: string
+  aspspCountry: string
+  sessionId: string | null
+  status: BankConnectionStatus
+  validUntil: string | null
+  createdAt: string
+  updatedAt: string | null
+}
+
+export type BankConnectionWithAccounts = BankConnectionRow & {
+  accounts: BankAccountRow[]
+}
+
+export function createBankConnection(input: {
+  provider: string
+  aspspName: string
+  aspspCountry: string
+}): number {
+  const db = initializeDatabase()
+  const result = db.prepare(`
+    INSERT INTO bank_connections (provider, aspsp_name, aspsp_country) VALUES (?, ?, ?)
+  `).run(input.provider, input.aspspName, input.aspspCountry)
+  return result.lastInsertRowid as number
+}
+
+export function getBankConnection(id: number): BankConnectionRow | null {
+  const db = initializeDatabase()
+  const row = db.prepare(`
+    SELECT id, provider, aspsp_name, aspsp_country, session_id, status, valid_until, created_at, updated_at
+    FROM bank_connections WHERE id = ?
+  `).get(id) as
+    | {
+        id: number
+        provider: string
+        aspsp_name: string
+        aspsp_country: string
+        session_id: string | null
+        status: BankConnectionStatus
+        valid_until: string | null
+        created_at: string
+        updated_at: string | null
+      }
+    | undefined
+  if (!row) return null
+  return {
+    id: row.id,
+    provider: row.provider,
+    aspspName: row.aspsp_name,
+    aspspCountry: row.aspsp_country,
+    sessionId: row.session_id,
+    status: row.status,
+    validUntil: row.valid_until,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export function updateBankConnection(id: number, updates: {
+  sessionId?: string | null
+  status?: BankConnectionStatus
+  validUntil?: string | null
+}) {
+  const db = initializeDatabase()
+  const current = db.prepare(`SELECT session_id, status, valid_until FROM bank_connections WHERE id = ?`).get(id) as
+    | { session_id: string | null; status: BankConnectionStatus; valid_until: string | null }
+    | undefined
+  if (!current) return false
+  db.prepare(`
+    UPDATE bank_connections
+    SET session_id = ?, status = ?, valid_until = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(
+    updates.sessionId !== undefined ? updates.sessionId : current.session_id,
+    updates.status ?? current.status,
+    updates.validUntil !== undefined ? updates.validUntil : current.valid_until,
+    id
+  )
+  return true
+}
+
+// Local housekeeping only — the remote session should already be revoked via
+// disconnect() first. Cascades to bank_accounts (ON DELETE CASCADE); never
+// touches the accounts table or transactions, which are the user's ledger
+// regardless of what happens to this connection.
+export function deleteBankConnection(id: number): boolean {
+  const db = initializeDatabase()
+  const result = db.prepare(`DELETE FROM bank_connections WHERE id = ?`).run(id)
+  return result.changes > 0
+}
+
+function mapBankAccountRow(row: {
+  id: number
+  connection_id: number
+  account_id: number
+  uid: string
+  name: string
+  identifier: string | null
+  sync_from_date: string | null
+  last_synced_at: string | null
+  last_booked_date: string | null
+  is_enabled: number
+  created_at: string
+  updated_at: string | null
+}): BankAccountRow {
+  return {
+    id: row.id,
+    connectionId: row.connection_id,
+    accountId: row.account_id,
+    uid: row.uid,
+    accountName: row.name,
+    accountIdentifier: row.identifier,
+    syncFromDate: row.sync_from_date,
+    lastSyncedAt: row.last_synced_at,
+    lastBookedDate: row.last_booked_date,
+    isEnabled: Boolean(row.is_enabled),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+const BANK_ACCOUNT_SELECT = `
+  SELECT
+    ba.id, ba.connection_id, ba.account_id, ba.uid,
+    a.name, a.identifier,
+    ba.sync_from_date, ba.last_synced_at, ba.last_booked_date, ba.is_enabled,
+    ba.created_at, ba.updated_at
+  FROM bank_accounts ba
+  JOIN accounts a ON a.id = ba.account_id
+`
+
+export function listBankConnectionsWithAccounts(): BankConnectionWithAccounts[] {
+  const db = initializeDatabase()
+  const connections = db.prepare(`
+    SELECT id, provider, aspsp_name, aspsp_country, session_id, status, valid_until, created_at, updated_at
+    FROM bank_connections
+    ORDER BY created_at DESC
+  `).all() as Array<{
+    id: number
+    provider: string
+    aspsp_name: string
+    aspsp_country: string
+    session_id: string | null
+    status: BankConnectionStatus
+    valid_until: string | null
+    created_at: string
+    updated_at: string | null
+  }>
+
+  const accountsByConnection = db.prepare(`${BANK_ACCOUNT_SELECT} ORDER BY a.name`).all() as Parameters<
+    typeof mapBankAccountRow
+  >[0][]
+
+  return connections.map((c) => ({
+    id: c.id,
+    provider: c.provider,
+    aspspName: c.aspsp_name,
+    aspspCountry: c.aspsp_country,
+    sessionId: c.session_id,
+    status: c.status,
+    validUntil: c.valid_until,
+    createdAt: c.created_at,
+    updatedAt: c.updated_at,
+    accounts: accountsByConnection.filter((a) => a.connection_id === c.id).map(mapBankAccountRow),
+  }))
+}
+
+// Enable Banking account uids are session-scoped, so on re-auth we match the
+// existing Horus account by IBAN (not uid) and repoint it at the new
+// connection — this is what lets transaction FKs (keyed on accounts.id)
+// survive a reconnect untouched.
+export function upsertBankAccountsByIban(
+  connectionId: number,
+  provider: string,
+  incoming: Array<{ iban: string; uid: string; name: string }>
+): BankAccountRow[] {
+  const db = initializeDatabase()
+
+  return db.transaction(() => {
+    return incoming.map(({ iban, uid, name }) => {
+      const accountId = getOrCreateAccount({
+        bank: provider,
+        identifier: iban,
+        type: 'checking',
+        defaultName: name || iban,
+      })
+
+      const existing = db.prepare(`SELECT id FROM bank_accounts WHERE account_id = ?`).get(accountId) as
+        | { id: number }
+        | undefined
+
+      if (existing) {
+        db.prepare(`
+          UPDATE bank_accounts
+          SET connection_id = ?, uid = ?, updated_at = datetime('now')
+          WHERE id = ?
+        `).run(connectionId, uid, existing.id)
+      } else {
+        db.prepare(`
+          INSERT INTO bank_accounts (connection_id, account_id, uid) VALUES (?, ?, ?)
+        `).run(connectionId, accountId, uid)
+      }
+
+      const row = db.prepare(`${BANK_ACCOUNT_SELECT} WHERE ba.account_id = ?`).get(accountId) as Parameters<
+        typeof mapBankAccountRow
+      >[0]
+      return mapBankAccountRow(row)
+    })
+  })()
+}
+
+export function updateBankAccount(id: number, updates: {
+  syncFromDate?: string | null
+  isEnabled?: boolean
+  lastSyncedAt?: string | null
+  lastBookedDate?: string | null
+}) {
+  const db = initializeDatabase()
+  const current = db.prepare(`
+    SELECT sync_from_date, is_enabled, last_synced_at, last_booked_date FROM bank_accounts WHERE id = ?
+  `).get(id) as
+    | { sync_from_date: string | null; is_enabled: number; last_synced_at: string | null; last_booked_date: string | null }
+    | undefined
+  if (!current) return false
+  db.prepare(`
+    UPDATE bank_accounts
+    SET sync_from_date = ?, is_enabled = ?, last_synced_at = ?, last_booked_date = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(
+    updates.syncFromDate !== undefined ? updates.syncFromDate : current.sync_from_date,
+    updates.isEnabled !== undefined ? (updates.isEnabled ? 1 : 0) : current.is_enabled,
+    updates.lastSyncedAt !== undefined ? updates.lastSyncedAt : current.last_synced_at,
+    updates.lastBookedDate !== undefined ? updates.lastBookedDate : current.last_booked_date,
+    id
+  )
+  return true
+}
+
+export type SyncedTransactionInsert = TransactionInsert & {
+  bankTransactionId: string
+}
+
+// Rows before the account's sync_from_date are skipped (the user-chosen
+// cutoff that keeps live sync from overlapping an existing CSV import).
+// Both raw_hash and (account_id, bank_transaction_id) UNIQUE violations
+// count as "skipped" — either means this row is already in the ledger.
+export function insertSyncedTransactions(
+  bankAccountId: number,
+  accountId: number,
+  rows: SyncedTransactionInsert[]
+): { inserted: number; skipped: number } {
+  const db = initializeDatabase()
+  const bankAccount = db.prepare(`SELECT sync_from_date FROM bank_accounts WHERE id = ?`).get(bankAccountId) as
+    | { sync_from_date: string | null }
+    | undefined
+  const syncFromDate = bankAccount?.sync_from_date ?? null
+
+  const insertStmt = db.prepare(`
+    INSERT INTO transactions (
+      account, account_id, booking_date, value_date, amount, currency,
+      payee, purpose, iban, bic, reference, method, raw_hash, source, bank_transaction_id
+    ) VALUES (
+      @account, @accountId, @bookingDate, @valueDate, @amount, @currency,
+      @payee, @purpose, @iban, @bic, @reference, @method, @rawHash, 'api', @bankTransactionId
+    )
+  `)
+
+  let inserted = 0
+  let skipped = 0
+  let maxBookedDate: string | null = null
+
+  const transaction = db.transaction((items: SyncedTransactionInsert[]) => {
+    for (const item of items) {
+      if (syncFromDate && item.bookingDate < syncFromDate) {
+        skipped += 1
+        continue
+      }
+      try {
+        insertStmt.run({ ...item, accountId, method: item.method ?? null })
+        inserted += 1
+        if (!maxBookedDate || item.bookingDate > maxBookedDate) {
+          maxBookedDate = item.bookingDate
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : ''
+        if (message.includes('UNIQUE constraint failed')) {
+          skipped += 1
+          continue
+        }
+        throw error
+      }
+    }
+
+    updateBankAccount(bankAccountId, {
+      lastSyncedAt: new Date().toISOString(),
+      ...(maxBookedDate ? { lastBookedDate: maxBookedDate } : {}),
+    })
+  })
+
+  transaction(rows)
+
+  return { inserted, skipped }
 }
 
 export type TransactionRow = {
@@ -2806,6 +3207,8 @@ export function clearAndResetData() {
       DELETE FROM ai_requests;
       DELETE FROM chat_sessions;
       DELETE FROM categories;
+      DELETE FROM bank_accounts;
+      DELETE FROM bank_connections;
       DELETE FROM accounts;
     `)
 

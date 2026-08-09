@@ -1,5 +1,20 @@
 /// <reference types="vite/client" />
 
+type BankAccountRow = {
+  id: number
+  connectionId: number
+  accountId: number
+  uid: string
+  accountName: string
+  accountIdentifier: string | null
+  syncFromDate: string | null
+  lastSyncedAt: string | null
+  lastBookedDate: string | null
+  isEnabled: boolean
+  createdAt: string
+  updatedAt: string | null
+}
+
 interface Window {
   api: {
     db: {
@@ -398,6 +413,61 @@ interface Window {
         anchorDate?: string | null
       }) => Promise<boolean>
       delete: (payload: { id: number }) => Promise<boolean>
+    }
+    banks: {
+      credentialsStatus: () => Promise<{ present: boolean; appId: string | null }>
+      pickKeyFile: () => Promise<string | null>
+      setCredentials: (payload: { appId: string; keyPath: string }) => Promise<{ success: boolean; error?: string }>
+      testCredentials: () => Promise<{
+        success: boolean
+        name?: string
+        environment?: string
+        active?: boolean
+        countries?: string[]
+        error?: string
+      }>
+      listAspsps: (country?: string) => Promise<
+        Array<{
+          name: string
+          country: string
+          maximum_consent_validity: number
+        }>
+      >
+      connect: (payload: {
+        aspspName: string
+        aspspCountry: string
+        maximumConsentValidity: number
+        connectionId?: number
+      }) => Promise<{
+        success: boolean
+        connectionId?: number
+        accounts?: BankAccountRow[]
+        error?: string
+      }>
+      connectCancel: () => Promise<{ success: boolean }>
+      completeAuth: (payload: { redirectUrl: string }) => Promise<{ success: boolean; error?: string }>
+      onConnectStatus: (callback: (status: { type: string; url?: string }) => void) => () => void
+      listConnections: () => Promise<
+        Array<{
+          id: number
+          provider: string
+          aspspName: string
+          aspspCountry: string
+          sessionId: string | null
+          status: 'pending' | 'active' | 'expired' | 'revoked'
+          validUntil: string | null
+          accounts: BankAccountRow[]
+        }>
+      >
+      updateAccount: (payload: { id: number; syncFromDate?: string | null; isEnabled?: boolean }) => Promise<boolean>
+      sync: (payload: { connectionId: number }) => Promise<{
+        success: boolean
+        perAccount?: Array<{ bankAccountId: number; inserted: number; skipped: number; error?: string }>
+        needsReauth?: boolean
+        error?: string
+      }>
+      disconnect: (payload: { connectionId: number }) => Promise<{ success: boolean; error?: string }>
+      deleteConnection: (payload: { connectionId: number }) => Promise<boolean>
     }
     budgets: {
       list: (payload: { period: string }) => Promise<Array<{

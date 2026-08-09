@@ -58,7 +58,7 @@ export function AiSettingsView({
   return (
     <div className="card">
       <div className="card-header">
-        <h2>Settings</h2>
+        <h2>AI Settings</h2>
         <button onClick={loadAiSettings}>Refresh</button>
       </div>
       <div className="status">

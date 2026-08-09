@@ -69,7 +69,15 @@ import {
   removeTransactionTag,
   renameTag,
   deleteTag,
+  listBankConnectionsWithAccounts,
+  updateBankConnection,
+  updateBankAccount,
+  deleteBankConnection,
 } from './db'
+import { storeCredentials, loadCredentials } from './connectors/enablebanking/secrets'
+import { getApplication, listAspsps } from './connectors/enablebanking/client'
+import { connectBank, completeAuthManually, cancelConnect, disconnect } from './connectors/enablebanking/auth'
+import { syncConnection } from './connectors/enablebanking/sync'
 import { parseDkbCsv } from './importers/dkb'
 import { parseIngCsv } from './importers/ing'
 import { parseSparkasseCsv } from './importers/sparkasse'
@@ -105,6 +113,16 @@ export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
+
+// Electron's default userData path is derived from package.json's "name"
+// ("horus") regardless of how the app was launched — so `npm run dev`, this
+// project's driver scripts, AND the real packaged/installed app all resolve
+// to the same directory unless separated explicitly. Must be set before
+// `app` is ready. Only a genuinely packaged build (electron-builder output)
+// has `app.isPackaged === true`, so this never affects your real installed app.
+if (!app.isPackaged) {
+  app.setPath('userData', path.join(app.getPath('userData'), '..', 'horus-dev'))
+}
 
 let win: BrowserWindow | null
 
@@ -812,5 +830,128 @@ app.whenReady().then(() => {
       account: payload?.account,
     })
   })
+  ipcMain.handle('banks:credentials:status', () => {
+    // appId is not secret (it's a public client identifier) so it's safe to
+    // show in the UI; the private key itself is never sent to the renderer.
+    const credentials = loadCredentials()
+    return { present: credentials !== null, appId: credentials?.appId ?? null }
+  })
+  ipcMain.handle('banks:pick-key-file', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Select Enable Banking private key (.pem)',
+      properties: ['openFile'],
+      filters: [{ name: 'PEM key', extensions: ['pem'] }],
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
+  ipcMain.handle('banks:credentials:set', async (_event, payload) => {
+    try {
+      if (!payload?.keyPath) {
+        return { success: false, error: 'No key file selected.' }
+      }
+      const privateKeyPem = await readFile(payload.keyPath, 'utf-8')
+      storeCredentials(payload?.appId ?? '', privateKeyPem)
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Could not save credentials.' }
+    }
+  })
+  ipcMain.handle('banks:credentials:test', async () => {
+    try {
+      const credentials = loadCredentials()
+      if (!credentials) {
+        return { success: false, error: 'No credentials saved yet.' }
+      }
+      const application = await getApplication(credentials)
+      return {
+        success: true,
+        name: application.name,
+        environment: application.environment,
+        active: application.active,
+        countries: application.countries ?? [],
+      }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Test connection failed.' }
+    }
+  })
+  ipcMain.handle('banks:list-aspsps', async (_event, country?: string) => {
+    const credentials = loadCredentials()
+    if (!credentials) {
+      throw new Error('No credentials saved yet.')
+    }
+    return listAspsps(credentials, country)
+  })
+  ipcMain.handle('banks:connect', async (_event, payload) => {
+    try {
+      const credentials = loadCredentials()
+      if (!credentials) {
+        return { success: false, error: 'No credentials saved yet.' }
+      }
+      const result = await connectBank(
+        {
+          aspspName: payload.aspspName,
+          aspspCountry: payload.aspspCountry,
+          maximumConsentValidity: payload.maximumConsentValidity,
+          connectionId: payload.connectionId,
+        },
+        credentials,
+        (status) => win?.webContents.send('banks:connect-status', status)
+      )
+      return { success: true, ...result }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Connect failed.' }
+    }
+  })
+  ipcMain.handle('banks:connect-cancel', () => {
+    cancelConnect()
+    return { success: true }
+  })
+  ipcMain.handle('banks:complete-auth', (_event, payload) => {
+    try {
+      completeAuthManually(payload?.redirectUrl ?? '')
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Could not complete authorization.' }
+    }
+  })
+  ipcMain.handle('banks:list-connections', () => listBankConnectionsWithAccounts())
+  ipcMain.handle('banks:accounts:update', (_event, payload) => {
+    if (!payload?.id) return false
+    return updateBankAccount(payload.id, {
+      syncFromDate: payload?.syncFromDate,
+      isEnabled: payload?.isEnabled,
+    })
+  })
+  ipcMain.handle('banks:sync', async (_event, payload) => {
+    try {
+      const credentials = loadCredentials()
+      if (!credentials) {
+        return { success: false, error: 'No credentials saved yet.' }
+      }
+      const result = await syncConnection(payload?.connectionId, credentials)
+      return { success: true, ...result }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Sync failed.' }
+    }
+  })
+  ipcMain.handle('banks:delete-connection', (_event, payload) => {
+    if (!payload?.connectionId) return false
+    return deleteBankConnection(payload.connectionId)
+  })
+  ipcMain.handle('banks:disconnect', async (_event, payload) => {
+    try {
+      const credentials = loadCredentials()
+      if (credentials) {
+        await disconnect(payload?.connectionId, credentials)
+      } else {
+        updateBankConnection(payload?.connectionId, { status: 'revoked' })
+      }
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Disconnect failed.' }
+    }
+  })
+
   createWindow()
 })

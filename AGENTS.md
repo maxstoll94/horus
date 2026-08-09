@@ -4,18 +4,28 @@ Project knowledge base for AI assistants. Keep this concise and update when
 behavior, commands, or architecture changes.
 
 ## Start here (quick orientation)
-- Purpose: offline-first personal finance desktop app. Import bank CSVs
-  (DKB/ING), categorize transactions (manual + rules + AI), set budgets per
-  category, and track actual vs plan. An AI chat assistant with DB access is
-  available on every page.
-- Primary flow: Import CSV → categorize (rules / AI suggest / manual) →
-  set budgets → review Dashboard + Budget views → ask the AI chat.
+- Purpose: personal finance desktop app. Import bank CSVs (DKB/ING) or sync
+  live via Enable Banking (PSD2), categorize transactions (manual + rules +
+  AI), set budgets per category, and track actual vs plan. An AI chat
+  assistant with DB access is available on every page.
+- Not strictly offline: transactions synced via the optional Enable Banking
+  connector (Banks view) transit Enable Banking's servers. Everything else —
+  CSV import, categorization, budgets, the local SQLite DB — stays local, and
+  CSV import keeps working with no network involvement regardless.
+- Primary flow: Import CSV (or connect + sync a bank) → categorize (rules /
+  AI suggest / manual) → set budgets → review Dashboard + Budget views → ask
+  the AI chat.
 - Key files: `electron/db.ts` (schema/migrations/queries), `electron/main.ts`
   (IPC handlers), `electron/preload.ts` (window.api bridge), `src/App.tsx`
   (state + nav shell), `src/views/*` (per-view UI), `electron/ai-chat.ts`
-  (chat assistant + tools), `electron/ai.ts` (categorization suggestions).
+  (chat assistant + tools), `electron/ai.ts` (categorization suggestions),
+  `electron/connectors/enablebanking/*` (live bank sync: JWT client, OAuth
+  loopback flow, mapper, sync engine).
 - Gotchas: packaged app uses `file://` so bundle assets via import;
-  better-sqlite3 can require rebuild; Windows builds may need Developer Mode.
+  better-sqlite3 can require rebuild (`npx electron-builder install-app-deps`
+  after any native-module or Electron version change — ABI mismatch shows as
+  `NODE_MODULE_VERSION` errors on launch); Windows builds may need Developer
+  Mode.
 - Run/build: `npm run dev` / `npm run build`. Lint: `npm run lint`.
 
 ## Architecture
@@ -55,11 +65,20 @@ behavior, commands, or architecture changes.
   page. View-scoped system prompt + suggestions.
 
 ## Data model (SQLite, `app.getPath('userData')/horus.db`)
-- Migrations: idempotent blocks in `initializeSchema`, `SCHEMA_VERSION` = 21.
+- Migrations: idempotent blocks in `applyMigrations`, `SCHEMA_VERSION` = 23.
 - Tables: transactions, transaction_categories (M:N), categories, rules,
   rule_tags (M:N), tags, transaction_tags (M:N), imports, budgets, accounts,
   ai_settings, ai_requests, ai_suggestions, ai_tag_suggestions, chat_sessions,
-  schema_migrations.
+  secrets, bank_connections, bank_accounts, schema_migrations.
+- **userData is redirected for any unpackaged run** (`!app.isPackaged` — dev
+  server, `.claude/skills/run-desktop` driver, any future test harness) to a
+  sibling `horus-dev` directory instead of the default `horus` one, set in
+  `electron/main.ts` before `app` is ready. Without this, every local/dev/test
+  run shared the exact same database file as the real packaged/installed
+  app (verified directly — a bank connection made during driver testing
+  showed up in the real installed app). Only a genuinely packaged build
+  touches `horus/horus.db`; treat any `!app.isPackaged` run's data as
+  disposable, but never assume the reverse without checking `app.isPackaged`.
 - Tags: free-form cross-cutting labels (a trip, a person, "reimbursable"),
   never a category duplicate. Normalized to lowercase-kebab at write time
   (`normalizeTagName`) so "Italy 2026" and "italy-2026" collapse to one tag;

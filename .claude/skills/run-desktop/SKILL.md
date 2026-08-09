@@ -106,13 +106,22 @@ npm run dev   # vite dev server + auto-launched Electron window
   script's fault — click `Refresh` on that view to check whether it's a
   real staleness bug before concluding the driver missed a click.
 
-- **A fresh unpackaged Electron run uses its own userData dir** (separate
-  SQLite DB from a packaged/production install, and separate from
-  `npm run dev`'s dev-server run). Safe to test destructively — Danger
-  Zone actions here never touch your real data — but it also means state
-  persists across `quit`/relaunch within a single driver session (the
-  DB file isn't wiped by restarting the app), which is useful for
-  multi-step flows spanning several launches.
+- **Unpackaged runs (this driver AND `npm run dev`) are isolated from the
+  real installed app — but this required an explicit fix, so don't assume
+  it elsewhere.** Electron's default userData path is derived from the app
+  name alone (`package.json` `name`, "horus"), and by default nothing
+  separates a packaged install from a local unpackaged run using the same
+  name — this was verified directly (a real bank connection made through
+  this driver showed up in the actual installed app's database, and vice
+  versa). `electron/main.ts` now explicitly redirects userData for any
+  unpackaged run (`!app.isPackaged`) to a sibling `horus-dev` directory
+  before `app` is ready, so packaged installs keep using `horus/horus.db`
+  and everything else (dev server, this driver, any future test harness)
+  uses `horus-dev/horus.db` instead. Danger Zone actions through this driver
+  are safe again as a result. **This driver and `npm run dev` still share
+  `horus-dev` with each other** (same isolation mechanism, same non-packaged
+  condition) — that's expected and fine, since both are test/dev contexts;
+  only the packaged/installed app is meant to be off-limits.
 
 ## Troubleshooting
 

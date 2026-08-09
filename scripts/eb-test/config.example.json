@@ -1,0 +1,5 @@
+{
+  "app_id": "your-enable-banking-app-id",
+  "key_path": "scripts/eb-test/private-key.pem",
+  "redirect_url": "https://localhost:53289/eb-callback"
+}

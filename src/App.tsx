@@ -11,7 +11,9 @@ import { CategoriesView } from './views/CategoriesView'
 import { RulesView } from './views/RulesView'
 import { TagsView } from './views/TagsView'
 import { AccountsView } from './views/AccountsView'
+import { BanksView } from './views/BanksView'
 import { AiSettingsView } from './views/AiSettingsView'
+import { BankSettingsView } from './views/BankSettingsView'
 import { DocsView } from './views/DocsView'
 import { BudgetView } from './views/BudgetView'
 import { ChatView } from './views/ChatView'
@@ -236,7 +238,9 @@ function App() {
     | 'rules'
     | 'tags'
     | 'accounts'
+    | 'banks'
     | 'ai'
+    | 'bank-settings'
     | 'docs'
   >('dashboard')
   const [categorizationTab, setCategorizationTab] = useState<
@@ -2796,13 +2800,26 @@ function App() {
             >
               Accounts
             </button>
+            <button
+              className={activeView === 'banks' ? 'active' : ''}
+              onClick={() => setActiveView('banks')}
+            >
+              Banks
+            </button>
           </div>
           <div className="nav-section">
+            <span className="nav-section-label">Settings</span>
             <button
               className={activeView === 'ai' ? 'active' : ''}
               onClick={() => setActiveView('ai')}
             >
-              Settings
+              AI
+            </button>
+            <button
+              className={activeView === 'bank-settings' ? 'active' : ''}
+              onClick={() => setActiveView('bank-settings')}
+            >
+              Banking
             </button>
             <button
               className={activeView === 'docs' ? 'active' : ''}
@@ -2971,6 +2988,9 @@ function App() {
             accountColumns={accountColumns}
           />
         )}
+        {activeView === 'banks' && (
+          <BanksView pushToast={pushToast} loadAccounts={loadAccounts} setActiveView={setActiveView} />
+        )}
         {activeView === 'ai' && (
           <AiSettingsView
             aiKeyStatus={aiKeyStatus}
@@ -2987,6 +3007,7 @@ function App() {
             clearTransactions={clearTransactions}
           />
         )}
+        {activeView === 'bank-settings' && <BankSettingsView pushToast={pushToast} />}
         {activeView === 'docs' && <DocsView />}
       {ruleDraft && (
         <div className="modal-backdrop">

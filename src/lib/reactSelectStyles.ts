@@ -1,6 +1,6 @@
 import type { StylesConfig } from 'react-select'
 
-export const multiSelectStyles: StylesConfig<any, true> = {
+export const multiSelectStyles: StylesConfig<any, boolean> = {
   control: (base, state) => ({
     ...base,
     backgroundColor: '#ffffff',
