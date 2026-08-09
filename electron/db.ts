@@ -1186,6 +1186,12 @@ export function updateBankAccount(id: number, updates: {
     | { sync_from_date: string | null; is_enabled: number; last_synced_at: string | null; last_booked_date: string | null }
     | undefined
   if (!current) return false
+  // Changing sync_from_date always comes from the user editing it in the UI
+  // (the sync engine itself never passes this field) — treat it as "resync
+  // from this date," clearing the incremental watermark so the next sync
+  // fetches the full range again instead of only (old last_booked_date - 5d)
+  // onward, which would permanently skip anything before the prior cutoff.
+  const resetWatermark = updates.syncFromDate !== undefined && updates.syncFromDate !== current.sync_from_date
   db.prepare(`
     UPDATE bank_accounts
     SET sync_from_date = ?, is_enabled = ?, last_synced_at = ?, last_booked_date = ?, updated_at = datetime('now')
@@ -1193,8 +1199,8 @@ export function updateBankAccount(id: number, updates: {
   `).run(
     updates.syncFromDate !== undefined ? updates.syncFromDate : current.sync_from_date,
     updates.isEnabled !== undefined ? (updates.isEnabled ? 1 : 0) : current.is_enabled,
-    updates.lastSyncedAt !== undefined ? updates.lastSyncedAt : current.last_synced_at,
-    updates.lastBookedDate !== undefined ? updates.lastBookedDate : current.last_booked_date,
+    resetWatermark ? null : updates.lastSyncedAt !== undefined ? updates.lastSyncedAt : current.last_synced_at,
+    resetWatermark ? null : updates.lastBookedDate !== undefined ? updates.lastBookedDate : current.last_booked_date,
     id
   )
   return true
